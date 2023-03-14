@@ -1,6 +1,6 @@
 /*******************************************************************************
  * Inclusive Chained Decoupled Lookback Scan Implementation
- * Author:  Thomas Smith 3/8/2023
+ * Author:  Thomas Smith 3/13/2023
  *
  * Variant: Warp-sized radix KoggeStone scans embedded into BrentKungBlelloch
  *          Global Memory
@@ -8,6 +8,7 @@
  *          Fixed ThreadBlocks/WorkGroups
  *          Fixed Partitions
  *          Atomic Loads
+ *          Flag Packing
  *
  *
  * License: The Unlicense
@@ -33,28 +34,28 @@
 #pragma kernel InitPartitionDescriptors
 #pragma kernel ChainedDecoupledScanAtomic
 
-#define GROUP_SIZE 1024
-#define THREAD_BLOCKS 256
-#define THREAD_BLOCKS_LOG 8
+#define GROUP_SIZE          1024
+#define THREAD_BLOCKS       256
+#define THREAD_BLOCKS_LOG   8
 
-#define LANE_COUNT 32 //<--------------------------- Nvidia lanecount; change depending on hardware
-#define LANE_MASK 31
-#define LANE_LOG 5
+#define LANE_COUNT  32  //  <--------------------------- Nvidia lanecount; change depending on hardware
+#define LANE_MASK   31
+#define LANE_LOG    5
+
+//#define LANE_COUNT    64  <--------------------------- AMD
+//#define LANE_MASK     63
+//#define LANE_LOG      6
 #define WARPS_PER_BLOCK (GROUP_SIZE >> LANE_LOG)
-
-//#define LANE_COUNT 64 <--------------------------- AMD lanecount
-//#define LANE_MASK 63
-//#define LANE_LOG 6
 
 extern uint e_size;
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
 #define FLAG_PREFIX     2
+#define FLAG_MASK       3
 
 globallycoherent RWBuffer<uint> b_state;
 RWBuffer<uint> b_prefixSum;
-RWBuffer<uint64_t> a;
 
 groupshared bool g_groupFlags[WARPS_PER_BLOCK];
 groupshared uint g_agrMem[LANE_COUNT];
@@ -70,12 +71,10 @@ void Init(int3 id : SV_DispatchThreadID)
 void InitPartitionDescriptors(int3 id : SV_DispatchThreadID)
 {
     //Initialize the status flags
-    int locBlocks = ceil((THREAD_BLOCKS * 3.0f + 1) / GROUP_SIZE);
-    for (int i = id.x; i < THREAD_BLOCKS * 3 + 1; i += GROUP_SIZE * locBlocks)
-        b_state[i] = FLAG_NOT_READY;
+    if (id.x < THREAD_BLOCKS + 1)
+        b_state[id.x] = FLAG_NOT_READY;
 }
 
-//Fixed ThreadBlocks, Fixed Partitions, Variable Partition Size, Atomic loads
 [numthreads(GROUP_SIZE, 1, 1)]
 void ChainedDecoupledScanAtomic(int3 gtid : SV_GroupThreadID)
 {
@@ -83,7 +82,7 @@ void ChainedDecoupledScanAtomic(int3 gtid : SV_GroupThreadID)
     int partitionIndex = 0;
     if (gtid.x == 0)
     {
-        InterlockedAdd(b_state[THREAD_BLOCKS * 3], 1, partitionIndex);
+        InterlockedAdd(b_state[THREAD_BLOCKS], 1, partitionIndex);
         for (int k = 0; k < WARPS_PER_BLOCK; k++)
             g_agrMem[k] = partitionIndex;
     }
@@ -111,24 +110,17 @@ void ChainedDecoupledScanAtomic(int3 gtid : SV_GroupThreadID)
         
     }
     
-    //Set flags
+    //Set flag payload
     if (gtid.x == 0)
     {
         if (partitionIndex == 0)
-        {
-            InterlockedCompareStore(b_state[(THREAD_BLOCKS << 1) + partitionIndex], FLAG_NOT_READY, b_prefixSum[partitionEnd - 1]);
-            InterlockedCompareStore(b_state[partitionIndex], FLAG_NOT_READY, FLAG_PREFIX);
-        }
+            InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (b_prefixSum[partitionEnd - 1] << 2));
         else
-        {
-            InterlockedCompareStore(b_state[THREAD_BLOCKS + partitionIndex], FLAG_NOT_READY, b_prefixSum[partitionEnd - 1]);
-            InterlockedCompareStore(b_state[partitionIndex], FLAG_NOT_READY, FLAG_AGGREGATE);
-        }
+            InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (b_prefixSum[partitionEnd - 1] << 2));
     }
     
     //lookback
     int aggregate = 0;
-    int counter = 0;
     if (partitionIndex != 0)
     {
         int indexOffset = 0;
@@ -139,30 +131,18 @@ void ChainedDecoupledScanAtomic(int3 gtid : SV_GroupThreadID)
                 //"Walk" down the partition aggregates
                 for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                 {
-                    uint t;
-                    InterlockedCompareExchange(b_state[i], 0x7FFFFFFF, 0, t);
-                    
-                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_PREFIX ? LANE_COUNT : 0));
-                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    g_agrMem[gtid.x] = 0;
+                    InterlockedOr(g_agrMem[gtid.x], b_state[i]);
+                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((g_agrMem[gtid.x] & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((g_agrMem[gtid.x] & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
                     if (prefixIndex < gapIndex)
                     {
-                       
-                        /*
-                        InterlockedOr(b_state[gtid.x == prefixIndex ? (THREAD_BLOCKS << 1) + i : THREAD_BLOCKS + i], 0, t);
-                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ? t : 0);
-                       */
-                        
-                        InterlockedCompareExchange(b_state[(THREAD_BLOCKS << 1) + i], 0x7FFFFFFF, 0, t);
-                        aggregate += WaveActiveSum(gtid.x == prefixIndex ? t : 0);
-                        
-                        InterlockedCompareExchange(b_prefixSum[(i + 1) * partitionSize - 1], 0x7FFFFFFF, 0, t);
-                        aggregate += WaveActiveSum(gtid.x < prefixIndex ? t : 0);
-                        
+                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (g_agrMem[gtid.x] >> 2) : 0);
                         if (gtid.x == 0)
                         {
-                            InterlockedCompareExchange(b_prefixSum[partitionEnd - 1], 0x7FFFFFFF, 0, t);
-                            InterlockedCompareStore(b_state[(THREAD_BLOCKS << 1) + partitionIndex], FLAG_NOT_READY, aggregate + t);
-                            InterlockedCompareStore(b_state[partitionIndex], FLAG_AGGREGATE, FLAG_PREFIX);
+                            g_agrMem[gtid.x] = 0;
+                            InterlockedOr(g_agrMem[gtid.x], b_prefixSum[partitionEnd - 1]);
+                            InterlockedExchange(b_state[partitionIndex], ((aggregate + g_agrMem[gtid.x]) << 2) ^ FLAG_PREFIX, indexOffset);
                             for (int k = 0; k < WARPS_PER_BLOCK; k++)
                             {
                                 g_groupFlags[k] = false;
@@ -173,15 +153,14 @@ void ChainedDecoupledScanAtomic(int3 gtid : SV_GroupThreadID)
                     }
                     else
                     {
-                        InterlockedCompareExchange(b_state[THREAD_BLOCKS + i], 0x7FFFFFFF, 0, t);
-                        aggregate += WaveActiveSum(gtid.x < gapIndex ? t : 0);
+                        aggregate += WaveActiveSum(gtid.x < gapIndex ? (g_agrMem[gtid.x] >> 2) : 0);
                         indexOffset += gapIndex;
                         break;
                     }
                 }
             }
             AllMemoryBarrierWithGroupSync();
-        } while (WaveReadLaneFirst(g_groupFlags[gtid.x >> LANE_LOG]) && counter < 1000000);
+        } while (WaveReadLaneFirst(g_groupFlags[gtid.x >> LANE_LOG]));
     }
     
     //Final sum, fan out aggregates

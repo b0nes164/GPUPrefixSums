@@ -7,7 +7,6 @@
  *          Fixed Partition Size
  *          Variable ThreadBlocks/WorkGroups
  *          Fixed Partitions
- *          No Atomic Loads
  *
  * License: The Unlicense
  *          This is free and unencumbered software released into the public domain.
@@ -30,16 +29,16 @@
 #pragma kernel InitPartitionDescriptors
 #pragma kernel ChainedDecoupledScanC
 
-#define GROUP_SIZE 1024
+#define GROUP_SIZE  1024
 
-#define LANE_COUNT 32 //<--------------------------- Nvidia lanecount; change depending on hardware
-#define LANE_MASK 31
-#define LANE_LOG 5
+#define LANE_COUNT  32  // <--------------------------- Nvidia lanecount; change depending on hardware
+#define LANE_MASK   31
+#define LANE_LOG    5
 #define WARPS_PER_BLOCK 32
-
-//#define LANE_COUNT 64 <--------------------------- AMD lanecount
-//#define LANE_MASK 63
-//#define LANE_LOG 6
+//#define LANE_COUNT    64 <--------------------------- AMD
+//#define LANE_MASK     63
+//#define LANE_LOG      6
+//#define WAPRS_PER_BLOCK  16
 
 extern uint e_size;
 extern uint e_partitions;
@@ -47,6 +46,7 @@ extern uint e_partitions;
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
 #define FLAG_PREFIX     2
+#define FLAG_MASK       3
 
 globallycoherent RWBuffer<uint> b_state;
 RWBuffer<uint> b_prefixSum;
@@ -65,9 +65,8 @@ void Init(int3 id : SV_DispatchThreadID)
 void InitPartitionDescriptors(int3 id : SV_DispatchThreadID)
 {
     //Initialize the status flags
-    int threadBlocks = ceil((e_partitions * 3.0f + 1) / GROUP_SIZE);
-    for (int i = id.x; i < e_partitions * 3 + 1; i += GROUP_SIZE * threadBlocks)
-        b_state[i] = FLAG_NOT_READY;
+    if (id.x < e_partitions + 1)
+        b_state[id.x] = FLAG_NOT_READY;
 }
 
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -78,7 +77,7 @@ void ChainedDecoupledScanC(int3 gtid : SV_GroupThreadID)
     int threadBlocks = ceil((e_size * 1.0f) / GROUP_SIZE);
     if(gtid.x == 0)
     {
-        InterlockedAdd(b_state[threadBlocks * 3], 1, partitionIndex);
+        InterlockedAdd(b_state[threadBlocks], 1, partitionIndex);
         for (int k = 0; k < WARPS_PER_BLOCK; k++)
             g_agrMem[k] = partitionIndex;
     }
@@ -107,19 +106,13 @@ void ChainedDecoupledScanC(int3 gtid : SV_GroupThreadID)
     }
     AllMemoryBarrierWithGroupSync();
     
-    //Set flags
+    //Set flag payload
     if (gtid.x == 0)
     {
         if(partitionIndex == 0)
-        {
-            b_state[(threadBlocks << 1) + partitionIndex] = b_prefixSum[partitionEnd - 1];
-            InterlockedOr(b_state[partitionIndex], FLAG_PREFIX);
-        }
+            InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (b_prefixSum[partitionEnd - 1] << 2));
         else
-        {
-            b_state[threadBlocks + partitionIndex] = b_prefixSum[partitionEnd - 1];
-            InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE);
-        }
+            InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (b_prefixSum[partitionEnd - 1] << 2));
     }
     
     //lookback
@@ -134,18 +127,15 @@ void ChainedDecoupledScanC(int3 gtid : SV_GroupThreadID)
                 //"Walk" down the partition aggregates
                 for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                 {
-                    int t = b_state[i];
-                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_PREFIX ? LANE_COUNT : 0));
-                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    uint flagPayload = b_state[i];
+                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
                     if (prefixIndex < gapIndex)
                     {
-                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ?
-                                (gtid.x == prefixIndex ? b_state[(threadBlocks << 1) + i] : b_state[threadBlocks + i]) : 0);
+                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
                         if (gtid.x == 0)
                         {
-                            b_state[(threadBlocks << 1) + partitionIndex] = aggregate + b_prefixSum[partitionEnd - 1];
-                            InterlockedAdd(b_state[partitionIndex], 1);
-                            
+                            InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + b_prefixSum[partitionEnd - 1]) << 2), flagPayload);
                             for (int k = 0; k < WARPS_PER_BLOCK; k++)
                             {
                                 g_groupFlags[k] = false;
@@ -156,7 +146,7 @@ void ChainedDecoupledScanC(int3 gtid : SV_GroupThreadID)
                     }
                     else
                     {
-                        aggregate += WaveActiveSum(gtid.x < gapIndex ? b_state[threadBlocks + i] : 0);
+                        aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
                         indexOffset += gapIndex;
                         break;
                     }

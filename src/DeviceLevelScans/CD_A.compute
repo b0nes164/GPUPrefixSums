@@ -7,7 +7,6 @@
  *          Fixed Partition Size
  *          Fixed ThreadBlocks/WorkGroups
  *          Variable Partitions
- *          No Atomic Loads
  *
  * Note:    This variant uses the last bit of the first element in shared memory as a flag
  *
@@ -32,15 +31,16 @@
 #pragma kernel InitPartitionDescriptors
 #pragma kernel ChainedDecoupledScanA
 
-#define PARTITION_SIZE 4096
-#define GROUP_SIZE 1024
+#define PARTITION_SIZE  4096
+#define GROUP_SIZE      1024
 
-#define LANE_COUNT 32 //<--------------------------- For Nvidia; change depending on hardware
-#define LANE_MASK 31
-#define LANE_LOG 5
+#define LANE_COUNT  32  // <---------------------------   For Nvidia; change depending on hardware
+#define LANE_MASK   31
+#define LANE_LOG    5
+//#define LANE_COUNT    64 <-------------------------   AMD 
+//#define LANE_MASK     63
+//#define LANE_LOG      6    
 
-//#define LANE_COUNT 64 <--------------------------- For AMD 
-//#define LANE_MASK 63
 
 extern uint e_size;
 extern uint e_partitions;
@@ -48,6 +48,7 @@ extern uint e_partitions;
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
 #define FLAG_PREFIX     2
+#define FLAG_MASK       3
 
 globallycoherent RWBuffer<uint> b_state;
 RWBuffer<uint> b_prefixSum;
@@ -64,9 +65,8 @@ void Init(int3 id : SV_DispatchThreadID)
 void InitPartitionDescriptors(int3 id : SV_DispatchThreadID)
 {
     //Initialize the status flags
-    int threadBlocks = ceil((e_partitions * 3 + 1) * 1.0f / GROUP_SIZE);
-    for (int i = id.x; i < e_partitions * 3 + 1; i += GROUP_SIZE * threadBlocks)
-        b_state[i] = FLAG_NOT_READY;
+    if(id.x < e_partitions + 1)
+        b_state[id.x] = FLAG_NOT_READY;
 }
 
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -78,7 +78,7 @@ void ChainedDecoupledScanA(int3 gtid : SV_GroupThreadID)
     //Atomically increment counter
     if (gtid.x == 0)
     {
-        InterlockedAdd(b_state[partitions * 3], 1, partitionIndex);
+        InterlockedAdd(b_state[partitions], 1, partitionIndex);
         g_sharedMem[0] = partitionIndex;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -107,24 +107,17 @@ void ChainedDecoupledScanA(int3 gtid : SV_GroupThreadID)
             offset += LANE_LOG;
         }
         
-        //Set flags
+        //Set flag payload
         if (gtid.x == 0)
         {
             if(partitionIndex == 0)
-            {
-                InterlockedOr(b_state[(partitions << 1) + partitionIndex], g_sharedMem[partitionSize - 1]);
-                InterlockedOr(b_state[partitionIndex], FLAG_PREFIX);
-            }
+                InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[partitionSize - 1] << 2));
             else
-            {
-                InterlockedOr(b_state[partitions + partitionIndex], g_sharedMem[partitionSize - 1]);
-                InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE);
-            }
+                InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[partitionSize - 1] << 2));
         }
         
         //lookback
         int aggregate = 0;
-        int counter = 0;
         if(partitionIndex != 0)
         {
             int indexOffset = 0;
@@ -134,38 +127,36 @@ void ChainedDecoupledScanA(int3 gtid : SV_GroupThreadID)
                 {
                     for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                     {
-                        int t = b_state[i];
-                        int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_PREFIX ? LANE_COUNT : 0));
-                        int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        uint flagPayload = b_state[i];   
+                        int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
                         if (prefixIndex < gapIndex)
                         {
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ?
-                                (gtid.x == prefixIndex ? b_state[(partitions << 1) + i] : b_state[partitions + i]) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
                             {
-                                InterlockedAdd(b_state[(partitions << 1) + partitionIndex], aggregate + g_sharedMem[partitionSize - 1]);
-                                InterlockedAdd(b_state[partitionIndex], 1);
-                                
+                                //use flagPayload as a dummy variable, as we are done with it
+                                //InterlockedExchange is the easiest way of updating the global flag payload
+                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + g_sharedMem[partitionSize - 1]) << 2), flagPayload);
                                 g_sharedMem[0] ^= (1 << 31);
-                                int t = g_sharedMem[1];
+                                flagPayload = g_sharedMem[1];
                                 g_sharedMem[1] = aggregate;
-                                aggregate = t;
+                                aggregate = flagPayload;
                             }
                             break;
                         }
                         else
                         {
-                            aggregate += WaveActiveSum(gtid.x < gapIndex ? b_state[partitions + i] : 0);
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
                             indexOffset += gapIndex;
                             break;
                         }
                     }
                 }
                 GroupMemoryBarrierWithGroupSync();
-                ++counter;
-            } while (((WaveReadLaneFirst(g_sharedMem[0]) >> 31) & 1) == 0 && counter < 1000000); 
+            } while (((WaveReadLaneFirst(g_sharedMem[0]) >> 31) & 1) == 0); 
             
-            //propogate aggregate values, messy due to shared memory constraint
+            //propogate aggregate values
             if (gtid.x == 0)
                 g_sharedMem[0] &= 0x7FFFFFFF;
             else
@@ -208,7 +199,7 @@ void ChainedDecoupledScanA(int3 gtid : SV_GroupThreadID)
         //Atomically increment partition index
         if (gtid.x == 0)
         {
-            InterlockedAdd(b_state[partitions * 3], 1, partitionIndex);
+            InterlockedAdd(b_state[partitions], 1, partitionIndex);
             g_sharedMem[0] = partitionIndex;
         }
         GroupMemoryBarrierWithGroupSync();
