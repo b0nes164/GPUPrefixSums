@@ -2,9 +2,18 @@
 
 This project is a survey of various prefix sums, ranging from the warp to the device level. In particular it includes a compute shader implementation of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back). To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself(Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems). 
 
-#Important Notes
-Currently, shader model 6.6 features such as 64-bit values and atomics are not available in Unity compute shaders due to a bug, I believe. Because Chained Scan relies on the global coherency of flag values, I cannot guaruntee my current implementations of the algorithm will run correctly *all* of the time, as the only is to pack the flag values.
+# Important Notes
+Currently the maximum aggregate sum supported in the Chained Scan algorithm is 2^30. This is because in order to maintain globlal coherency of the flag values between threadblocks/workgroups, we have to pack the group aggregate into into the same value as the group status flag which takes up 2 bits. Although shader model 6.6 does support 64-bit values and atomics, these features are not available in Unity compute shaders due to a bug, I believe.
 
+Because Chained Scan relies on the guaranteed forward progress of threads and fair scheduling of thread groups, I cannot guarantee that this implementation will work on AMD cards or on Nvidia cards older than Volta. This is because unlike CPUs, GPUs are far less standardized and [different hardware models have vastly different capabilities](https://arxiv.org/abs/2109.06132). Therefore, this code is more of a proof of concept, rather than something that I would recommend implementing into a production build (eventually I will update this project to include a device level reduce-then scan which is a tad slower but more than suffecient, and more importantly does not have the hardware portability issues that Chained Scan does). If you wish to read more about the portability issues, and some of the general challenges of implementing Chained scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it.
+
+Because we are using [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), DX12 is a must as well as a [minimum Unity version of 2021.1 or later](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/) for `pragma use_dxc`. 
+
+# To Use This Project
+To use Chained Scan, simply attatch `ChainedDecoupledScan.cs` to a game object, then attach the compute shader which matches 'serialized field' on the game object. This is a bit clunky, but as the group sizes and other macro defined values are designed to be able to vary between the different Chained Scan implementations, this is the simplest way I've come up with (**If you know a way to vary the threadgroup size at compile time, please let me know, that would be awesome**).
+
+To use any of the block-level scans or below, simply attatch 'PrefixSumDispatcher.cs' to a game object, then attach 'PrefixSums.compute' to the script.
+ 
 # Kogge-Stone
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
 
