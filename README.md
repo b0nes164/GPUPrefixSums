@@ -4,22 +4,31 @@ This project is a survey of various prefix sums, ranging from the warp to the de
 
 # Important Notes
 <details>
-  <summary>Currently the maximum aggregate sum supported in the Chained Scan algorithm is 2^30.</summary>  <br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; This is because in order to maintain globlal coherency of the flag values between threadblocks/workgroups, we have to pack the group aggregate into into the same value as the group status flag which takes up 2 bits. Although shader model 6.6 does support 64-bit values and atomics, these features are not available in Unity compute shaders due to a bug, I believe.
- <br/>
+  <summary>Currently the maximum aggregate sum supported in the Chained Scan algorithm is 2^30.</summary>
+&nbsp;  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;This is because in order to maintain globlal coherency of the flag values between threadblocks/workgroups, we have to 	pack the group aggregate into into the same value as the group status flag which takes up 2 bits. Although shader model 6.6 does support 64-bit values and 	atomics, these features are not available in Unity compute shaders due to a bug, I believe.
+&nbsp;  
+  
 </details>
 
 <details>
-  <summary>Chained Scan is not guaranteed to work on AMD cards or on Nvidia cards older than Volta.</summary>   <br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Because Chained Scan relies on the guaranteed forward progress of threads and fair scheduling of thread groups, I cannot guarantee that this implementation will work on AMD cards or on Nvidia cards older than Volta. This is because unlike CPUs, GPUs are far less standardized and [different hardware models have vastly different capabilities](https://arxiv.org/abs/2109.06132). Therefore, this code is more of a proof of concept, rather than something that I would recommend implementing into a production build (eventually I will update this project to include a device level reduce-then scan which is a tad slower but more than suffecient, and more importantly does not have the hardware portability issues that Chained Scan does). If you wish to read more about the portability issues, and some of the general challenges of implementing Chained scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it.
- <br/>
+  <summary>Chained Scan is not guaranteed to work on AMD cards or on Nvidia cards older than Volta.</summary>
+&nbsp;  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Because Chained Scan relies on the guaranteed forward progress of threads and fair scheduling of thread groups, I cannot guarantee that this implementation will work on AMD cards or on Nvidia cards older than Volta. This is because unlike CPUs, GPUs are far less standardized and [different hardware models have vastly different capabilities](https://arxiv.org/abs/2109.06132). Therefore, this code is more of a proof of concept, rather than something that I would recommend implementing into a production build (eventually I will update this project to include a device level reduce-then scan which is a tad slower but more than suffecient, and more importantly does not have the hardware portability issues that Chained Scan does). If you wish to read more about the portability issues, and some of the general challenges of implementing Chained scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it.
+&nbsp;  
+  
 </details>
 
 
 <details>
-  <summary>DX12 is a must as well as a minimum Unity version of 2021.1 or later</summary>   <br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
- <br/>
+  <summary>DX12 is a must as well as a minimum Unity version of 2021.1 or later</summary>
+&nbsp;  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
+&nbsp;  
+  
 </details>
 
 # To Use This Project
