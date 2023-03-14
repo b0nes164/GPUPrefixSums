@@ -1,0 +1,217 @@
+/******************************************************************************************************************
+ * Inclusive Chained Decoupled Lookback Scan Implementation
+ * Author:  Thomas Smith 3/8/2023
+ *
+ * Variant: Warp-sized radix KoggeStone scans embedded into BrentKungBlelloch
+ *          Shared Memory
+ *          Fixed Partition Size
+ *          Fixed ThreadBlocks/WorkGroups
+ *          Variable Partitions
+ *          No Atomic Loads
+ *
+ * Note:    This variant uses the last bit of the first element in shared memory as a flag
+ *
+ * License: The Unlicense
+ *          This is free and unencumbered software released into the public domain.
+ *          For more information, please refer to the repository license or <https://unlicense.org>
+ *   
+ * Based off of Research by:
+ *          Duane Merrill, Corporation
+ *          Michael Garland, Corporation
+ *          https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back
+ *
+ * This implementation does not constitute ANY form of endorsement or promotion
+ * from its authors or Nvidia Corporation. In no event shall Nvidia Corporation
+ * be held liable for ANY damages arising in any way out of the use of this 
+ * software. The implementation author is not affiliated in ANY way with Nvidia
+ * Corporation.
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel InitPartitionDescriptors
+#pragma kernel ChainedDecoupledScanA
+
+#define PARTITION_SIZE 4096
+#define GROUP_SIZE 1024
+
+#define LANE_COUNT 32 //<--------------------------- For Nvidia; change depending on hardware
+#define LANE_MASK 31
+#define LANE_LOG 5
+
+//#define LANE_COUNT 64 <--------------------------- For AMD 
+//#define LANE_MASK 63
+
+extern uint e_size;
+extern uint e_partitions;
+
+#define FLAG_NOT_READY  0
+#define FLAG_AGGREGATE  1
+#define FLAG_PREFIX     2
+
+globallycoherent RWBuffer<uint> b_state;
+RWBuffer<uint> b_prefixSum;
+groupshared uint g_sharedMem[PARTITION_SIZE];
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += GROUP_SIZE * 32)
+        b_prefixSum[i] = 1;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void InitPartitionDescriptors(int3 id : SV_DispatchThreadID)
+{
+    //Initialize the status flags
+    int threadBlocks = ceil((e_partitions * 3 + 1) * 1.0f / GROUP_SIZE);
+    for (int i = id.x; i < e_partitions * 3 + 1; i += GROUP_SIZE * threadBlocks)
+        b_state[i] = FLAG_NOT_READY;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void ChainedDecoupledScanA(int3 gtid : SV_GroupThreadID)
+{
+    int partitionIndex, partitionSize, partitionStart;
+    int partitions = e_partitions;
+    
+    //Atomically increment counter
+    if (gtid.x == 0)
+    {
+        InterlockedAdd(b_state[partitions * 3], 1, partitionIndex);
+        g_sharedMem[0] = partitionIndex;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+        
+    while(partitionIndex < partitions)
+    {
+        partitionStart = partitionIndex * PARTITION_SIZE;
+        partitionSize = partitionIndex == partitions - 1? e_size - partitionStart : PARTITION_SIZE;
+    
+        //load into shared memory
+        for (int j = gtid.x; j < partitionSize; j += GROUP_SIZE)
+            g_sharedMem[j] = b_prefixSum[j + partitionStart];
+        GroupMemoryBarrierWithGroupSync();
+        
+        //aggregate
+        int offset = 0;
+        for(j = partitionSize; j > 1; j >>= LANE_LOG)
+        {
+            for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            {
+                const int t = ((i + 1) << offset) - 1;
+                g_sharedMem[t] += WavePrefixSum(g_sharedMem[t]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+            offset += LANE_LOG;
+        }
+        
+        //Set flags
+        if (gtid.x == 0)
+        {
+            if(partitionIndex == 0)
+            {
+                InterlockedOr(b_state[(partitions << 1) + partitionIndex], g_sharedMem[partitionSize - 1]);
+                InterlockedOr(b_state[partitionIndex], FLAG_PREFIX);
+            }
+            else
+            {
+                InterlockedOr(b_state[partitions + partitionIndex], g_sharedMem[partitionSize - 1]);
+                InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE);
+            }
+        }
+        
+        //lookback
+        int aggregate = 0;
+        int counter = 0;
+        if(partitionIndex != 0)
+        {
+            int indexOffset = 0;
+            do
+            {
+                if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                {
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                    {
+                        int t = b_state[i];
+                        int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_PREFIX ? LANE_COUNT : 0));
+                        int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - (t == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (prefixIndex < gapIndex)
+                        {
+                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ?
+                                (gtid.x == prefixIndex ? b_state[(partitions << 1) + i] : b_state[partitions + i]) : 0);
+                            if (gtid.x == 0)
+                            {
+                                InterlockedAdd(b_state[(partitions << 1) + partitionIndex], aggregate + g_sharedMem[partitionSize - 1]);
+                                InterlockedAdd(b_state[partitionIndex], 1);
+                                
+                                g_sharedMem[0] ^= (1 << 31);
+                                int t = g_sharedMem[1];
+                                g_sharedMem[1] = aggregate;
+                                aggregate = t;
+                            }
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? b_state[partitions + i] : 0);
+                            indexOffset += gapIndex;
+                            break;
+                        }
+                    }
+                }
+                GroupMemoryBarrierWithGroupSync();
+                ++counter;
+            } while (((WaveReadLaneFirst(g_sharedMem[0]) >> 31) & 1) == 0 && counter < 1000000); 
+            
+            //propogate aggregate values, messy due to shared memory constraint
+            if (gtid.x == 0)
+                g_sharedMem[0] &= 0x7FFFFFFF;
+            else
+                aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+            GroupMemoryBarrierWithGroupSync();
+            if(gtid.x == 0)
+                g_sharedMem[1] = aggregate;
+            if(gtid.x < LANE_COUNT)
+                aggregate = WaveReadLaneAt(aggregate, 1);
+        }
+        
+        offset = LANE_LOG;
+        for (j = 1 << LANE_LOG; j < partitionSize; j <<= LANE_LOG)
+        {
+            for (int i = (gtid.x + 1 << offset); i < (j << LANE_LOG) && i < partitionSize; i += (GROUP_SIZE << offset))
+                g_sharedMem[i - 1] += aggregate;
+            GroupMemoryBarrierWithGroupSync();
+        
+            for (i = gtid.x; i < partitionSize; i += GROUP_SIZE)
+                if ((i & (j << LANE_LOG) - 1) >= j)
+                    if ((i + 1 & j - 1) != 0)
+                        g_sharedMem[i] += WaveReadLaneFirst(g_sharedMem[((i >> offset) << offset) - 1]);
+            GroupMemoryBarrierWithGroupSync();
+            offset += LANE_LOG;
+        }
+        
+        if (gtid.x < LANE_COUNT)
+        {
+            if (gtid.x < LANE_MASK)
+                g_sharedMem[gtid.x] += aggregate;
+            else
+                g_sharedMem[partitionSize - 1] += aggregate;
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+        //place back into global memory
+        for (j = gtid.x; j < partitionSize; j += GROUP_SIZE)
+            b_prefixSum[j + partitionStart] = g_sharedMem[j];
+        
+        //Atomically increment partition index
+        if (gtid.x == 0)
+        {
+            InterlockedAdd(b_state[partitions * 3], 1, partitionIndex);
+            g_sharedMem[0] = partitionIndex;
+        }
+        GroupMemoryBarrierWithGroupSync();
+        partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+    }
+}

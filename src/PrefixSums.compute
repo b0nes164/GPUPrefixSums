@@ -1,0 +1,458 @@
+/*******************************************************************************
+ * Prefix Sum Survey
+ * Author:  Thomas Smith 3/12/2023
+ *
+ * License: The Unlicense
+ * This is free and unencumbered software released into the public domain.
+ * For more information, please refer to the repository license or <https://unlicense.org>
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel Serial
+#pragma kernel KoggeStoneWarp
+#pragma kernel WarpIntrinsic
+#pragma kernel KoggeStone
+#pragma kernel Sklansky
+#pragma kernel BrentKung
+#pragma kernel ReduceScan
+#pragma kernel RadixBrentKung
+#pragma kernel RadixSklansky
+#pragma kernel BrentKungLarge
+#pragma kernel BrentKungLargeUnrolled
+#pragma kernel ReduceScanLarge
+#pragma kernel RadixBrentKungLarge
+#pragma kernel RadixReduce
+#pragma kernel RadixSklanskyLarge
+
+#define GROUP_SIZE 1024
+#define LANE_COUNT 32 //<--------------------------- Nvidia lanecount; change depending on hardware
+#define LANE_MASK 31
+#define LANE_LOG 5
+
+//#define LANE_COUNT 64 <--------------------------- AMD lanecount
+//#define LANE_MASK 63
+//#define LANE_LOG 6
+
+extern uint e_size;
+RWBuffer<uint> prefixSumBuffer;
+groupshared uint g_reduceValues[8192];
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += GROUP_SIZE * 32)
+        prefixSumBuffer[i] = 1;
+}
+
+[numthreads(1, 1, 1)]
+void Serial(int3 gtid : SV_GroupThreadID)
+{
+    for(uint i = 1; i < e_size; ++i)
+        prefixSumBuffer[i] += prefixSumBuffer[i - 1];
+}
+
+/***********************************************************************************
+* Warp-level sums of size LESS THAN OR EQUAL TO to the warp size.
+************************************************************************************/
+[numthreads(LANE_COUNT, 1, 1)]
+void KoggeStoneWarp(int3 gtid : SV_GroupThreadID)
+{
+    if(gtid.x < e_size)
+    {
+        if(gtid.x > 0) prefixSumBuffer[gtid.x] += prefixSumBuffer[gtid.x - 1];
+        if(gtid.x > 1) prefixSumBuffer[gtid.x] += prefixSumBuffer[gtid.x - 2];
+        if(gtid.x > 3) prefixSumBuffer[gtid.x] += prefixSumBuffer[gtid.x - 4];
+        if(gtid.x > 7) prefixSumBuffer[gtid.x] += prefixSumBuffer[gtid.x - 8];
+        if(gtid.x > 15) prefixSumBuffer[gtid.x] += prefixSumBuffer[gtid.x - 16];
+    }    
+}
+
+[numthreads(LANE_COUNT, 1, 1)]
+void WarpIntrinsic(int3 gtid : SV_GroupThreadID)
+{
+    if(gtid.x < e_size)
+        prefixSumBuffer[gtid.x] += WavePrefixSum(prefixSumBuffer[gtid.x]);
+}
+
+/***********************************************************************************
+* Block-level sums of size LESS THAN OR EQUAL TO to the block/group size.
+************************************************************************************/
+[numthreads(GROUP_SIZE, 1, 1)]
+void KoggeStone(int3 gtid : SV_GroupThreadID)
+{
+    for (int j = 1; j < e_size; j <<= 1)
+    {
+        if (gtid.x + j < e_size)
+            prefixSumBuffer[gtid.x + j] += prefixSumBuffer[gtid.x];
+        GroupMemoryBarrierWithGroupSync();
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void Sklansky(int3 gtid : SV_GroupThreadID)
+{
+    int offset = 0;
+    for (int j = 1; j < e_size; j <<= 1)
+    {
+        if ((gtid.x & j) != 0 && gtid.x < e_size)
+            prefixSumBuffer[gtid.x] += prefixSumBuffer[((gtid.x >> offset) << offset) - 1];
+        GroupMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void BrentKung(int3 gtid : SV_GroupThreadID)
+{
+    //Upsweep
+    int offset = 1;
+    for (int j = e_size >> 1; j > 0; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    //Downsweep
+    for (j = 1; j < e_size; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void ReduceScan(int3 gtid : SV_GroupThreadID)
+{
+    int spillFactor = 4;
+    int spillSize = e_size >> spillFactor;
+    
+    //Upsweep until desired threshold
+    int offset = 1;
+    for (int j = e_size >> 1; j > spillSize; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    
+    //Pass intermediates into secondary buffer
+    if (gtid.x < j)
+    {
+        int temp = offset * ((gtid.x << 1) + 2) - 1;
+        g_reduceValues[gtid.x] = prefixSumBuffer[temp] + prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        prefixSumBuffer[temp] = g_reduceValues[gtid.x];
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Reduce intermediates
+    offset = 0;
+    for (j = 1; j < spillSize; j <<= 1)
+    {
+        if ((gtid.x & j) != 0 && gtid.x < spillSize)
+            g_reduceValues[gtid.x] += g_reduceValues[((gtid.x >> offset) << offset) - 1];
+        GroupMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+    
+    //Pass in intermediates and downsweep
+    offset = 1 << (spillFactor - 1);
+    GroupMemoryBarrierWithGroupSync();
+    if (gtid.x < spillSize)
+    {
+        const int temp = offset * ((gtid.x << 1) + 2);
+        InterlockedAdd(prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1], g_reduceValues[(temp >> spillFactor) - 1]);
+        if ((temp >> spillFactor) > 1)
+            InterlockedAdd(prefixSumBuffer[temp - 1], g_reduceValues[(temp >> spillFactor) - 2]);
+    }
+    
+    for (j = spillSize << 1; j < e_size; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixBrentKung(int3 gtid : SV_GroupThreadID)
+{
+    //Perform warp-sized KoggeStone reductions
+    if (gtid.x < e_size)
+        prefixSumBuffer[gtid.x] += WavePrefixSum(prefixSumBuffer[gtid.x]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Warp-sized BrentKung upsweep
+    const int temp = ((gtid.x + 1) << LANE_LOG) - 1;
+    if (gtid.x < (e_size >> LANE_LOG))
+        prefixSumBuffer[temp] += WavePrefixSum(prefixSumBuffer[temp]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Fan the aggregates from the upsweep
+    const int lane = gtid.x & LANE_MASK;
+    if (lane < LANE_MASK)
+        prefixSumBuffer[gtid.x + LANE_COUNT] += prefixSumBuffer[((gtid.x + LANE_COUNT >> LANE_LOG) << LANE_LOG) - 1];
+    
+    //For GroupSizes other than 1024
+    /*
+    //KoggeStone + BrentKung
+    int offset = 0;
+    for (int j = e_size; j > 1; j >>= LANE_LOG)
+    {
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+        {
+            const int temp = ((i + 1) << offset) - 1;
+            prefixSumBuffer[temp] += WavePrefixSum(prefixSumBuffer[temp]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        offset += LANE_LOG;
+    }
+    
+    //Fan
+    const int lane = gtid.x & LANE_MASK;
+    for (int i = gtid.x + (1 << LANE_LOG); i < e_size; i += GROUP_SIZE)
+    {
+        if (lane < LANE_MASK)
+            prefixSumBuffer[i] += prefixSumBuffer[((i >> LANE_LOG) << LANE_LOG) - 1];
+    }
+    */
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixSklansky(int3 gtid : SV_GroupThreadID)
+{
+    //Perform warp-sized KoggeStone reductions
+    if (gtid.x < e_size)
+        prefixSumBuffer[gtid.x] += WavePrefixSum(prefixSumBuffer[gtid.x]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Warp-sized Sklansky propogation fan
+    int offset = LANE_LOG;
+    for (int j = 1 << LANE_LOG; j < e_size; j <<= 1)
+    {
+        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+            if ((i & j) != 0)
+                prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
+        GroupMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+}
+
+/***********************************************************************************
+* Block-level sums of size GREATER THAN the block/group size.
+************************************************************************************/
+[numthreads(GROUP_SIZE, 1, 1)]
+void BrentKungLarge(int3 gtid : SV_GroupThreadID)
+{
+    //Upsweep
+    int offset = 1;
+    for (int j = e_size >> 1; j > 0; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 2) - 1] += prefixSumBuffer[offset * ((i << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    
+    //Downsweep
+    for (j = 1; j < e_size; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 3) - 1] += prefixSumBuffer[offset * ((i << 1) + 2) - 1];
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void BrentKungLargeUnrolled(int3 gtid : SV_GroupThreadID)
+{
+    //Upsweep
+    int offset = 1;
+    for (int j = e_size >> 1; j > 32; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 2) - 1] += prefixSumBuffer[offset * ((i << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Unroll the final passes of the upsweep, and the initial passes of the downsweep.
+    if (gtid.x < 32)
+    {
+        prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+        if (gtid.x < 16) prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+        if (gtid.x < 8) prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+        if (gtid.x < 4) prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+        if (gtid.x < 2) prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+        offset <<= 1;
+        
+        if (gtid.x < 1)
+        {
+            prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 1) - 1];
+            prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+        }
+        
+        offset >>= 1;
+        if (gtid.x < 2) prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+        offset >>= 1;
+        if (gtid.x < 4) prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+        offset >>= 1;
+        if (gtid.x < 8) prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+        offset >>= 1;
+        if (gtid.x < 16) prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+        offset >>= 1;
+        if (gtid.x < 32) prefixSumBuffer[offset * ((gtid.x << 1) + 3) - 1] += prefixSumBuffer[offset * ((gtid.x << 1) + 2) - 1];
+    }
+    
+    //Downsweep
+    for (j = 64; j < e_size; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 3) - 1] += prefixSumBuffer[offset * ((i << 1) + 2) - 1];
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void ReduceScanLarge(int3 gtid : SV_GroupThreadID)
+{
+    int spillFactor = 4;
+    int spillSize = e_size >> spillFactor;
+    
+    //Upsweep until desired threshold
+    int offset = 1;
+    for (int j = e_size >> 1; j > spillSize; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 2) - 1] += prefixSumBuffer[offset * ((i << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Pass intermediates into secondary buffer
+    for (int i = gtid.x; i < j; i += GROUP_SIZE)
+    {
+        int temp = offset * ((i << 1) + 2) - 1;
+        g_reduceValues[i] = prefixSumBuffer[temp] + prefixSumBuffer[offset * ((i << 1) + 1) - 1];
+        prefixSumBuffer[temp] = g_reduceValues[i];
+    }
+    
+    //Reduce intermediates in secondary buffer, note we must use a scan capable of also handling
+    //an intermediate buffer potentially greater than the groupsize as well.
+    offset = 1;
+    for (j >>= 1; j > 0; j >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            g_reduceValues[offset * ((i << 1) + 2) - 1] += g_reduceValues[offset * ((i << 1) + 1) - 1];
+        offset <<= 1;
+    }
+    for (j = 1; j < spillSize; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+            g_reduceValues[offset * ((i << 1) + 3) - 1] += g_reduceValues[offset * ((i << 1) + 2) - 1];
+    }
+    
+    //Pass in intermediates and downsweep
+    offset = 1 << (spillFactor - 1);
+    GroupMemoryBarrierWithGroupSync();
+    for (i = gtid.x; i < spillSize; i += GROUP_SIZE)
+    {
+        const int temp = offset * ((i << 1) + 2);
+        InterlockedAdd(prefixSumBuffer[offset * ((i << 1) + 3) - 1], g_reduceValues[(temp >> spillFactor) - 1]);
+        if ((temp >> spillFactor) > 1)
+            InterlockedAdd(prefixSumBuffer[temp - 1], g_reduceValues[(temp >> spillFactor) - 2]);
+    }
+    
+    for (j = spillSize << 1; j < e_size; j <<= 1)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        for (i = gtid.x; i < j; i += GROUP_SIZE)
+            prefixSumBuffer[offset * ((i << 1) + 3) - 1] += prefixSumBuffer[offset * ((i << 1) + 2) - 1];
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
+{
+    //Warp-sized radix BrentKung
+    int offset = 0;
+    for (int j = e_size; j > 1; j >>= LANE_LOG)
+    {
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+        {
+            const int temp = ((i + 1) << offset) - 1;
+            prefixSumBuffer[temp] += WavePrefixSum(prefixSumBuffer[temp]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        offset += LANE_LOG;
+    }
+    
+    //Warp-sized radix propogation fans
+    offset = LANE_LOG;
+    for (j = 1 << LANE_LOG; j < e_size; j <<= LANE_LOG)
+    {
+        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+            if ((i & (j << LANE_LOG) - 1) >= j)         
+                if ((i + 1 & j - 1) != 0)                
+                    prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
+        GroupMemoryBarrierWithGroupSync();
+        offset += LANE_LOG;
+    }
+}
+
+[numthreads(LANE_COUNT, 1, 1)]
+void RadixReduce(int3 gtid : SV_GroupThreadID)
+{
+    const int partitionSize = e_size >> LANE_LOG;
+    const int partStart = partitionSize * gtid.x;
+    const int endPart = (gtid.x + 1) * partitionSize - 1;
+    
+    //Per-thread serial reductions
+    for (int j = partStart + 1; j <= endPart; ++j)
+        prefixSumBuffer[j] += prefixSumBuffer[j - 1];
+    
+    //Single Kogge-Stone on the aggregates
+    prefixSumBuffer[endPart] += WavePrefixSum(prefixSumBuffer[endPart]);
+    
+    //Per-thread serial propogation
+    if(gtid.x > 0)
+        for (j = partStart; j < endPart; ++j)
+            prefixSumBuffer[j] += prefixSumBuffer[partStart - 1];
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixSklanskyLarge(int3 gtid : SV_GroupThreadID)
+{
+    //Warp-sized radix Kogge-Stone
+    for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        prefixSumBuffer[i] += WavePrefixSum(prefixSumBuffer[i]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    //Warp-sized radix Sklansky propogation fan
+    int offset = LANE_LOG;
+    for (int j = 1 << LANE_LOG; j < e_size; j <<= 1)
+    {
+        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+            if ((i & j) != 0)
+                prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
+        GroupMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+}
