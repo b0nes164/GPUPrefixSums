@@ -1,4 +1,5 @@
 # GPU Prefix Sums
+![Prefix Sum Speeds, in Unity Editor, RTX 2080 Super](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/8254c2f8-4fb9-4032-8679-4833225de78a)
 
 This project is a survey of various prefix sums, ranging from the warp to the device level. In particular it includes a compute shader implementation of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back). To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself(Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems). 
 
