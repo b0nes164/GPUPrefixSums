@@ -1,27 +1,43 @@
 # GPU Prefix Sums
-![Prefix Sum Speeds, in Unity Editor, RTX 2080 Super](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/8254c2f8-4fb9-4032-8679-4833225de78a)
+![Prefix Sum Speeds, in Unity Editor, RTX 2080 Super](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/7fd486be-cfd5-4a03-b24b-2d850431d8fd)
 
-This project is a survey of various prefix sums, ranging from the warp to the device level. In particular it includes a compute shader implementation of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back). To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself(Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems). 
+This project is a survey of GPU prefix sums, ranging from the warp to the device level, with the aim of providing developers an uncompiled look at modern prefix sum implementations. In particular, this project was inspired by Duane Merill's [research](https://research.nvidia.com/person/duane-merrill%2520iii), and it includes various implementations of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back), which is how we are able to reach speeds approaching `MemCopy()`. While this project is not intended to be the fastest possible implementation, it is still highly optimized and is still significantly (5x) faster than a naive implementation of Blelloch's [algorithm](https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda) on a threadblock level. Finally, this project was written in HLSL for compute shaders, though with reasonable knowledge of GPU programming it is easily portable. **To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself (Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems).** 
 
 # Important Notes
 <details>
-  <summary>Currently the maximum aggregate sum supported in the Chained Scan algorithm is 2^30.</summary>
-&nbsp;  
+  <summary>This project has NOT been tested on AMD video cards or on CPU integrated graphics. If you have an AMD card, preprocessor macros for wave/warp size MUST be MANUALLY CHANGED in the desired scan file.</summary>
+&nbsp;
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;This is because in order to maintain globlal coherency of the flag values between threadblocks/workgroups, we have to 	pack the group aggregate into into the same value as the group status flag which takes up 2 bits. Although shader model 6.6 does support 64-bit values and 	atomics, these features are not available in Unity compute shaders due to a bug, I believe.
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unfortunately, AMD and Nvidia video cards have different wave sizes, which means that code that uses wave intrinsic functions, like we do, must be manually tuned for each video card brand. So if you have an AMD card, you will have to manaully change the preprocessor macros in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
+
+  ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
 &nbsp;  
+
+  Comment out or delete the Nvidia values, and uncomment the AMD values. However, to reiterate, these scans have not been tested on AMD hardware, and should be treated as such.
+&nbsp;   
   
+&nbsp;   
 </details>
 
 <details>
-  <summary>Chained Scan is not guaranteed to work on AMD cards or on Nvidia cards older than Volta.</summary>
+  <summary>Chained Scan with Decoupled Lookback is not guaranteed to work on Nvidia cards older than Volta or AMD cards older than ????.</summary>
 &nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Because Chained Scan relies on the guaranteed forward progress of threads and fair scheduling of thread groups, I cannot guarantee that this implementation will work on AMD cards or on Nvidia cards older than Volta. This is because unlike CPUs, GPUs are far less standardized and [different hardware models have vastly different capabilities](https://arxiv.org/abs/2109.06132). Therefore, this code is more of a proof of concept, rather than something that I would recommend implementing into a production build (eventually I will update this project to include a device level reduce-then scan which is a tad slower but more than suffecient, and more importantly does not have the hardware portability issues that Chained Scan does). If you wish to read more about the portability issues, and some of the general challenges of implementing Chained scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it.
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Chained Scan relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks to alleviate the serial dependency of threadblocks in chained scan. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
 &nbsp;  
   
+&nbsp;  
 </details>
 
+<details>
+  <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is 2^30.</summary>
+&nbsp;  
+  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; In order to maintain coherency of the flag values between threadblocks, we have to pack the threadblock aggregate into into the same value as the status flag. As the flag takes up two bits, we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen not include it until Unity releases the features in earnest.
+&nbsp;  
+
+&nbsp; 
+</details>
 
 <details>
   <summary>DX12 is a must as well as a minimum Unity version of 2021.1 or later</summary>
