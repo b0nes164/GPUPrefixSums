@@ -33,7 +33,7 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is 2^30.</summary>
 &nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; In order to maintain coherency of the flag values between threadblocks, we have to pack the threadblock aggregate into into the same value as the status flag. As the flag takes up two bits, we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen not include it until Unity releases the features in earnest.
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; In order to maintain coherency of the flag values between threadblocks, we have to pack the threadblock aggregate into into the same value as the status flag. As the flag takes up 2 bits, we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen to not include it until Unity moves the feature out of beta.
 &nbsp;  
 
 &nbsp; 
@@ -46,13 +46,42 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
 &nbsp;  
   
+&nbsp; 
+</details>
+
+<details>
+  <summary>All scans are inclusive.</summary>
 </details>
 
 # To Use This Project
-To use Chained Scan, simply attatch `ChainedDecoupledScan.cs` to a game object, then attach the compute shader which matches 'serialized field' on the game object. This is a bit clunky, but as the group sizes and other macro defined values are designed to be able to vary between the different Chained Scan implementations, this is the simplest way I've come up with (**If you know a way to vary the threadgroup size at compile time, please let me know, that would be awesome**).
+1. Download or clone the repository.
+2. Drag the contents of `src` into a desired folder within a Unity project.
+3. Attach the scan dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
+4. Attach the matching compute shader to the game object. All compute shader are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
 
-To use any of the block-level scans or below, simply attatch 'PrefixSumDispatcher.cs' to a game object, then attach 'PrefixSums.compute' to the script.
+If you did this correctly you should see this in the inspector:
+
+
+
+![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/70bb5097-fff2-44e5-b396-2930a059fbad)
+
+Ensure the sliders are set to actual values, and you are good to go!
  
+ # Testing Suite
+ ![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
+
+Every scan dispatcher inherits a testing suite that can be controlled in the inspector.
+
++ `Validate Sum` performs a prefix sum on a buffer of size 2^`SizeExponent`. If you have `Validate Text` ticked, any errors found will printed in the debug log. For very large sums, this can take several minutes, so if you don't want absolutely every error printed you can tick `Quick Text` which limits the number of errors printed to 1024.
+
++ `Validate Sum Random`/ `Validate Sum Monotonic` are tests that fill the buffer with either random numbers or a monotonically increasing sequence of numbers. To make debugging easier, the buffer is by default filled with the value 1. This makes error checking very simple, because the corresponding correct prefix sum is the positive integers up to the size of the buffer. However, this makes some other errors possible, so to cover our bases we include this test.
+
++ `Debug At Size` performs a prefix sum on a buffer of size `Specific Size`. This is a way to directly test the validty of the prefix sum on buffer sizes that are not powers of two.
+
++ `Debug State` prints the contents of the `State Buffer` into the debug log after dispatching a scan. The `State Buffer` contains the threadblock aggregates in the device level scans, so `Debug State` can be used to verify that the aggregation is performed correctly.
+
++ `Torture Test` performs `Kernel Iterations` number of scans at the current `Size Exponent`. It does not perform any validation and should be used to verify the stability of a scan.  
+
 # Kogge-Stone
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
 
@@ -65,11 +94,18 @@ To use any of the block-level scans or below, simply attatch 'PrefixSumDispatche
 # Reduce-Then-Scan
 ![ReduceScanFinal](https://user-images.githubusercontent.com/68340554/224912530-2e1f2851-f531-4271-8246-d13983ccb584.png)
 
-# Radix Brent-Kung-Blelloch
-![RadixBrentKungImage](https://user-images.githubusercontent.com/68340554/224912635-88550d08-f2c2-4c97-b8a2-8fcebc939d41.png)
+# Raking Reduce-Scan
+![RakingReduceScan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3bc46762-1d61-41aa-aee5-1c492ff76ad6)
 
-# Radix Sklansky
-![RadixSklanskyFinal](https://user-images.githubusercontent.com/68340554/224912704-97d6eacf-9f33-4ac1-ab12-ad89e92cec51.png)
+# Warp-Sized Radix Brent-Kung-Blelloch
+![WarpBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/671768cf-a536-42bd-bd46-ddd6695c75e6)
 
-# Radix Reduce
-![RadixReduceImage](https://user-images.githubusercontent.com/68340554/224912791-5fa3743e-df00-49e7-8d37-028b73bba211.png)
+# Warp-Sized Radix Sklansky
+![WarpSklansky](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e7dd3c56-334f-431a-a7bf-0d30fa64ea9a)
+
+# Warp-Sized Radix Reduce-Scan
+![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
+
+#Block Level Scans
+![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
+![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
