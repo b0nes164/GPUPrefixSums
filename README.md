@@ -90,31 +90,277 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 # Prefix Sum Survey
 # Kogge-Stone
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
-```HLSL
 
+
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void KoggeStone(int3 gtid : SV_GroupThreadID)
+{
+    for (int j = 1; j < e_size; j <<= 1)
+    {
+        if (gtid.x + j < e_size)
+            prefixSumBuffer[gtid.x + j] += prefixSumBuffer[gtid.x];
+        DeviceMemoryBarrierWithGroupSync();
+    }
+}
 ```
+
 
 # Sklansky
 ![SklanskyFinal](https://user-images.githubusercontent.com/68340554/224912079-b1580955-b702-45f9-887a-7c1003825bf9.png)
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void Sklansky(int3 gtid : SV_GroupThreadID)
+{
+    int offset = 0;
+    for (int j = 1; j < e_size; j <<= 1)
+    {
+        if ((gtid.x & j) != 0 && gtid.x < e_size)
+            prefixSumBuffer[gtid.x] += prefixSumBuffer[((gtid.x >> offset) << offset) - 1];
+        DeviceMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+}
+```
 
 # Brent-Kung-Blelloch
 ![BrentKungImage](https://user-images.githubusercontent.com/68340554/224912128-73301be2-0bba-4146-8e20-2f1f3bc7c549.png)
+```HLSL
+//the classic
+[numthreads(GROUP_SIZE, 1, 1)]
+void BrentKungBlelloch(int3 gtid : SV_GroupThreadID)
+{
+    //Upsweep
+    if (gtid.x < (e_size >> 1))
+        prefixSumBuffer[(gtid.x << 1) + 1] += prefixSumBuffer[gtid.x << 1];
+    
+    int offset = 1;
+    for (int j = e_size >> 2; j > 0; j >>= 1)
+    {
+        DeviceMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[(((gtid.x << 1) + 2) << offset) - 1] += prefixSumBuffer[(((gtid.x << 1) + 1) << offset) - 1];
+        ++offset;
+    }
+    //Downsweep
+    for (j = 1; j < e_size; j <<= 1)
+    {
+        --offset;
+        DeviceMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[(((gtid.x << 1) + 3) << offset) - 1] += prefixSumBuffer[(((gtid.x << 1) + 2) << offset) - 1];
+    }
+}
+```
+
 
 # Reduce-Then-Scan
 ![ReduceScanFinal](https://user-images.githubusercontent.com/68340554/224912530-2e1f2851-f531-4271-8246-d13983ccb584.png)
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void ReduceScan(int3 gtid : SV_GroupThreadID)
+{
+    //cant be less than 2
+    int spillFactor = 4;
+    int spillSize = e_size >> spillFactor;
+    
+    //Upsweep until desired threshold
+    if (gtid.x < (e_size >> 1))
+        prefixSumBuffer[(gtid.x << 1) + 1] += prefixSumBuffer[(gtid.x << 1)];
+    AllMemoryBarrierWithGroupSync();
+    
+    int offset = 1;
+    for (int j = e_size >> 2; j > spillSize; j >>= 1)
+    {
+        if (gtid.x < j)
+            prefixSumBuffer[(((gtid.x << 1) + 2) << offset) - 1] += prefixSumBuffer[(((gtid.x << 1) + 1) << offset) - 1];
+        AllMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+    
+    //Pass intermediates into secondary buffer
+    if (gtid.x < j)
+    {
+        const int t = (((gtid.x << 1) + 2) << offset) - 1;
+        g_reduceValues[gtid.x] = prefixSumBuffer[t] + prefixSumBuffer[(((gtid.x << 1) + 1) << offset) - 1];
+        prefixSumBuffer[t] = g_reduceValues[gtid.x];
+    }
+    AllMemoryBarrierWithGroupSync();
+    
+    //Reduce intermediates
+    offset = 0;
+    for (j = 1; j < spillSize; j <<= 1)
+    {
+        if ((gtid.x & j) != 0 && gtid.x < spillSize)
+            g_reduceValues[gtid.x] += g_reduceValues[((gtid.x >> offset) << offset) - 1];
+        AllMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+    
+    //Pass in intermediates and downsweep
+    offset = spillFactor - 2;
+    const int t = (((gtid.x << 1) + 2) << offset) + (1 << offset + 1) - 1;
+    if (t  < e_size)
+        InterlockedAdd(prefixSumBuffer[t], g_reduceValues[(t >> spillFactor) - 1]);
+    
+    for (j = spillSize << 1; j < e_size; j <<= 1)
+    {
+        AllMemoryBarrierWithGroupSync();
+        if (gtid.x < j)
+            prefixSumBuffer[(((gtid.x << 1) + 3) << offset) - 1] += prefixSumBuffer[(((gtid.x << 1) + 2) << offset) - 1];
+        offset--;
+    }
+}
+```
 
 # Raking Reduce-Scan
 ![RakingReduceScan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3bc46762-1d61-41aa-aee5-1c492ff76ad6)
+```HLSL
+[numthreads(LANE_COUNT, 1, 1)]
+void RakingReduce(int3 gtid : SV_GroupThreadID)
+{
+    const int partitionSize = e_size >> LANE_LOG;
+    const int partStart = partitionSize * gtid.x;
+    const int partEnd = (gtid.x + 1) * partitionSize - 1;
+    
+    //Per-thread serial reductions
+    for (int j = partStart + 1; j <= partEnd; ++j)
+        prefixSumBuffer[j] += prefixSumBuffer[j - 1];
+    
+    //Single Kogge-Stone on the aggregates
+    prefixSumBuffer[partEnd] += WavePrefixSum(prefixSumBuffer[partEnd]);
+    
+    //Per-thread serial propogation
+    if (gtid.x > 0)
+        for (j = partStart; j < partEnd; ++j)
+            prefixSumBuffer[j] += prefixSumBuffer[partStart - 1];
+}
+```
 
 # Warp-Sized Radix Brent-Kung-Blelloch
 ![WarpBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/671768cf-a536-42bd-bd46-ddd6695c75e6)
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
+{
+    //Upsweep
+    //Warp-sized radix KoggeStone embedded into BrentKung
+    int offset = 0;
+    for (int j = e_size; j > 1; j >>= LANE_LOG)
+    {
+        for (int i = gtid.x; i < j; i += GROUP_SIZE)
+        {
+            const int t = ((i + 1) << offset) - 1;
+            prefixSumBuffer[t] += WavePrefixSum(prefixSumBuffer[t]);
+        }
+        DeviceMemoryBarrierWithGroupSync();
+        offset += LANE_LOG;
+    }
+    
+    //Downsweep
+    //Warp-sized radix propogation fans
+    offset = LANE_LOG;
+    for (j = 1 << LANE_LOG; j < e_size; j <<= LANE_LOG)
+    {
+        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+            if ((i & (j << LANE_LOG) - 1) >= j)         
+                if ((i + 1 & j - 1) != 0)                
+                    prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
+        DeviceMemoryBarrierWithGroupSync();
+        offset += LANE_LOG;
+    }
+}
+```
 
 # Warp-Sized Radix Sklansky
 ![WarpSklansky](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e7dd3c56-334f-431a-a7bf-0d30fa64ea9a)
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixSklanskyAdvanced(int3 gtid : SV_GroupThreadID)
+{
+    //Warp-sized radix Kogge-Stone
+    for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        prefixSumBuffer[i] += WavePrefixSum(prefixSumBuffer[i]);
+    DeviceMemoryBarrierWithGroupSync();
+    
+    int offset = LANE_LOG;
+    for (int j = 1 << LANE_LOG; j < e_size; j <<= 1)
+    {
+        for (int i = gtid.x; i < (e_size >> 1); i += GROUP_SIZE)
+        {
+            const int t = ((((i >> offset) << 1) + 1) << offset) + (i & (1 << offset) - 1);
+            prefixSumBuffer[t] += WaveReadLaneFirst(prefixSumBuffer[((t >> offset) << offset) - 1]);
+        }
+        DeviceMemoryBarrierWithGroupSync();
+        ++offset;
+    }
+}
+```
 
 # Warp-Sized Radix Reduce-Scan
 ![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
+```HLSL
+[numthreads(LANE_COUNT, 1, 1)]
+void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
+{
+    const int partitions = e_size >> LANE_LOG;
+    
+    //First kogge-stone warp scan without passing in passing in aggregate
+    prefixSumBuffer[gtid.x] += WavePrefixSum(prefixSumBuffer[gtid.x]);
+    
+    //Walk up partitions, passing in the agrregate as we go
+    for (int partitionIndex = 1; partitionIndex < partitions; ++partitionIndex)
+    {
+        const int partitionStart = partitionIndex << LANE_LOG;
+        const int t = gtid.x + partitionStart;
+        prefixSumBuffer[t] += WavePrefixSum(prefixSumBuffer[t]) + prefixSumBuffer[partitionStart - 1];
+    }
+}
+```
 
 # Block Level Scans
 ![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
+
+Explanation goes here...
+
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
+```HLSL
+#define LANE                (gtid.x & LANE_MASK)
+#define WAVE_INDEX          (gtid.x >> LANE_LOG)
+#define SPINE_INDEX         (((gtid.x + 1) << WAVE_PART_LOG) - 1)
+#define PARTITIONS          ((e_size & PARTITION_MASK) ? \
+                            (e_size >> PART_LOG) + 1 : \
+                            e_size >> PART_LOG)
+#define PARTITION_START     (partitionIndex << PART_LOG)
+#define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
+#define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
+{
+    uint aggregate = 0;
+    for (int partitionIndex = 0; partitionIndex < PARTITIONS; ++partitionIndex)
+    {
+        g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + PARTITION_START];
+        g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+        
+        for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < WAVE_PART_END; i += LANE_COUNT)
+        {
+            g_sharedMem[i] = b_prefixSum[i + PARTITION_START];
+            g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (gtid.x < WAVES_PER_GROUP)
+            g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]) + aggregate;
+        GroupMemoryBarrierWithGroupSync();
+        
+        const uint prev = WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : aggregate;
+        for (int i = LANE + WAVE_PART_START; i < WAVE_PART_END; i += LANE_COUNT)
+            b_prefixSum[i + PARTITION_START] = g_sharedMem[i] + (i < WAVE_PART_END - 1 ? prev : 0);
+        
+        aggregate = WaveReadLaneFirst(g_sharedMem[PARTITION_SIZE - 1]);
+        GroupMemoryBarrierWithGroupSync();
+    }
+}
+```
