@@ -7,16 +7,22 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
 
 # Important Notes
 <details>
-  <summary>This project has NOT been tested on AMD video cards or on CPU integrated graphics. If you have an AMD card, preprocessor macros for wave/warp size MUST be MANUALLY CHANGED in the desired scan file.</summary>
+  <summary>This project will not work on AMD or integrated graphics hardware unless preprocessor macros for wave/warp size and loop unrolls are manually changed in the desired scan file. Furthermore, this project has only been tested on my 2080 super, so the scans still may not work on non-Nvidia hardware.</summary>
 &nbsp;
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Unfortunately, AMD and Nvidia video cards have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each video card brand. Therefore AMD card users will have to manually change the preprocessor macros in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
+Unfortunately, AMD, Nvidia, and integrated graphics all have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware and then compile a targetted shader to use. Although Unity does have the `multi_compile` functionality, it is very cumbersome because it means maintaining and compiling a copy of each kernel for each hardware case. 
+
+Eventually I plan on making a tool to parse my Nvidia targetted shader and then output a `multi_compile` version for all hardware cases, but until then non-Nvidia users will have to manually change the preprocessor macros and unrolls in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
 &nbsp;  
 
-  Comment out or delete the Nvidia values, and uncomment the AMD values. However, to reiterate, these scans have not been tested on AMD hardware.
+  Comment out or delete the Nvidia values, and uncomment the AMD values. Next, search for the `[unroll(x)]` attributes and change the value to match the loop iterations at the new wave size:
+
+  ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6e20a567-3df5-45ab-ab5b-448fbc5bb2a1)
+
+  
 &nbsp;   
   
 &nbsp;   
@@ -27,7 +33,7 @@ Unfortunately, AMD and Nvidia video cards have different wave sizes, which means
 &nbsp;  
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Chained Scan relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
+Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
 &nbsp;  
   
 &nbsp;  
@@ -173,7 +179,7 @@ void BrentKungBlelloch(int3 gtid : SV_GroupThreadID)
 void ReduceScan(int3 gtid : SV_GroupThreadID)
 {
     //cant be less than 2
-    int spillFactor = 4;
+    int spillFactor = 3;
     int spillSize = e_size >> spillFactor;
     
     //Upsweep until desired threshold
@@ -251,7 +257,7 @@ void RakingReduce(int3 gtid : SV_GroupThreadID)
 ```
 
 # Warp-Sized-Radix Brent-Kung
-![WarpBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/671768cf-a536-42bd-bd46-ddd6695c75e6)
+![RadixBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d246240a-c088-4a74-a4c9-3cc2de12d1c9)
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -287,7 +293,7 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 ```
 
 # Warp-Sized-Radix Brent-Kung with Fused Upsweep-Downsweep
-fused goes here
+![RadixBKFused](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/4ccfaf59-9864-4405-a89f-f950c70cda2b)
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
