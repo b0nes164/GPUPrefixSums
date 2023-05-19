@@ -10,12 +10,13 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   <summary>This project has NOT been tested on AMD video cards or on CPU integrated graphics. If you have an AMD card, preprocessor macros for wave/warp size MUST be MANUALLY CHANGED in the desired scan file.</summary>
 &nbsp;
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unfortunately, AMD and Nvidia video cards have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each video card brand. Therefore AMD card users will have to manually change the preprocessor macros in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+Unfortunately, AMD and Nvidia video cards have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each video card brand. Therefore AMD card users will have to manually change the preprocessor macros in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
 &nbsp;  
 
-  Comment out or delete the Nvidia values, and uncomment the AMD values. However, to reiterate, these scans have not been tested on AMD hardware, and should be treated as such.
+  Comment out or delete the Nvidia values, and uncomment the AMD values. However, to reiterate, these scans have not been tested on AMD hardware.
 &nbsp;   
   
 &nbsp;   
@@ -25,7 +26,8 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   <summary>Chained Scan with Decoupled Lookback is not guaranteed to work on Nvidia cards older than Volta or AMD cards older than ????.</summary>
 &nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Chained Scan relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+Chained Scan relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
 &nbsp;  
   
 &nbsp;  
@@ -35,7 +37,10 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is $2^{30}$.</summary>
 &nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen to not include it until Unity moves the feature out of beta.
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen to not include it until Unity moves the feature out of beta.
+  
+Initially, I tried using two seperate 32-bit values for the flag and aggregate, using an atomic write for the aggregate then an atomic write for the flag. For whatever reason, this did not work.
 &nbsp;  
 
 &nbsp; 
@@ -45,7 +50,8 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   <summary>DX12 is a must as well as a minimum Unity version of 2021.1 or later</summary>
 &nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
 &nbsp;  
   
 &nbsp; 
@@ -60,21 +66,20 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
 2. Drag the contents of `src` into a desired folder within a Unity project.
 3. Attach the scan dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
 4. Attach the matching compute shader to the game object. All compute shader are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
+5. Ensure the sliders are set to nonzero values.
 
 If you did this correctly you should see this in the inspector:
 
 
 
 ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/70bb5097-fff2-44e5-b396-2930a059fbad)
-
-Ensure the sliders are set to nonzero values. You are now ready to begin your first test.
  
  # Testing Suite
  ![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
 
 Every scan dispatcher inherits a testing suite that can be controlled in the inspector.
 
-+ `Validate Sum` performs `Kernel Iterations` number of prefix sums on a buffer of size 2^`SizeExponent`. If you have `Validate Text` ticked, any errors found will printed in the debug log. For very large sums, this can take several minutes, so if you don't want absolutely every error printed you can tick `Quick Text` which limits the number of errors printed to 1024.
++ `Validate Sum` performs `Kernel Iterations` number of prefix sums on a buffer of size 2^`SizeExponent`, then reads result back to host CPU memory to validate the results. If you have `Validate Text` ticked, any errors found will printed in the debug log. For very large sums, this can take several minutes, so if you don't want absolutely every error printed you can tick `Quick Text` which limits the number of errors printed to 1024.
 
 + `Validate Sum Random`/ `Validate Sum Monotonic` perform a single prefix sum on a buffer of either random values or a sequence of postive integers. By default, the buffer is filled with the value 1. This makes error checking very simple, because the corresponding correct prefix sum is the sequence of positive integers up to the size of the buffer. However this makes some other errors possible, so to cover our bases we include this test.
 
@@ -84,13 +89,19 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 
 + `Torture Test` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`. It does not perform any validation and should be used to verify the stability of a scan. 
 
-+ `Timing Test` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then prints the total time taken to complete each kernel in the debug log. However, **this is not** the actual speed of the algorithm. This is because, to the best of my knowledge, there is no way to time the algorithm in-situ on the GPU. Neither is way to tell when the kernel is complete in host CPU code, at least not in Unity. Instead we are forced to make an `AsyncGPUReadback.Request()`, which waits until the prefix sum buffer is available then readbacks the entire buffer into host CPU memory. While this does enable us to time the algorithm, this time will also include the GPU - CPU readback time, **which can be as much as 99% of the total time value. Thus, the time value produced by this test should only be used as a relative measurement between tests.** To see how the algorithm was actually timed, see the Testing Methodology section below.
++ `Timing Test` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then prints the total time taken to complete each kernel in the debug log. However, **this is not** the actual speed of the algorithm. This is because, to the best of my knowledge, there is no way to time the kernel in-situ in HLSL. Neither is there a way to directly record kernel completion time in host CPU code, at least not in Unity. Instead we are forced to make an `AsyncGPUReadback.Request()`, which waits until the kernel completes writing to the buffer then reads **the entire buffer** back into host CPU memory. While this does time the kernel, the time produced will also include the GPU - CPU readback time, **which can be as much as 99% of the total time value. Thus, the time value produced by this test should only be used as a relative measurement between tests.** To see how the algorithm was actually timed, see the Testing Methodology section below.
 
-+ 
++ `Record Timing Data` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then writes each indivual kernel completion time to a `.csv` file. Note that this has the same shortcomings as `Timing Test`.
+
++ `Validate Powers of Two` performs a single prefix sum at all powers of two which the prefix sum is designed for. Typically for the device-level scans this is $2^{21}$ to $2^{28}$, $2^{28}$ being the largest sized buffer that Unity can allocate.
+
++ `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes. This test can take quite some time.
+
++ `Advanced Timing Mode` switches from the default kernel to a timing-specific kernel which is almost identical, but can perform `Scan Repeats` repititions of the algorithm **inside of the kernel**. However, as this can sometimes mean using an additional register to control the loop or additional computation to limit indexes to the buffer, **this is only an approximation of the kernel**. See Testing Methodology.
+
 # Prefix Sum Survey
 # Kogge-Stone
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
-
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -105,9 +116,9 @@ void KoggeStone(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-
 # Sklansky
 ![SklanskyFinal](https://user-images.githubusercontent.com/68340554/224912079-b1580955-b702-45f9-887a-7c1003825bf9.png)
+
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
 void Sklansky(int3 gtid : SV_GroupThreadID)
@@ -125,6 +136,7 @@ void Sklansky(int3 gtid : SV_GroupThreadID)
 
 # Brent-Kung-Blelloch
 ![BrentKungImage](https://user-images.githubusercontent.com/68340554/224912128-73301be2-0bba-4146-8e20-2f1f3bc7c549.png)
+
 ```HLSL
 //the classic
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -153,9 +165,9 @@ void BrentKungBlelloch(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-
 # Reduce-Then-Scan
 ![ReduceScanFinal](https://user-images.githubusercontent.com/68340554/224912530-2e1f2851-f531-4271-8246-d13983ccb584.png)
+
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
 void ReduceScan(int3 gtid : SV_GroupThreadID)
@@ -215,6 +227,7 @@ void ReduceScan(int3 gtid : SV_GroupThreadID)
 
 # Raking Reduce-Scan
 ![RakingReduceScan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3bc46762-1d61-41aa-aee5-1c492ff76ad6)
+
 ```HLSL
 [numthreads(LANE_COUNT, 1, 1)]
 void RakingReduce(int3 gtid : SV_GroupThreadID)
@@ -237,14 +250,15 @@ void RakingReduce(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Warp-Sized Radix Brent-Kung-Blelloch
+# Warp-Sized-Radix Brent-Kung
 ![WarpBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/671768cf-a536-42bd-bd46-ddd6695c75e6)
+
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
 void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 {
     //Upsweep
-    //Warp-sized radix KoggeStone embedded into BrentKung
+    //Warp-sized-radix KoggeStone embedded into BrentKung
     int offset = 0;
     for (int j = e_size; j > 1; j >>= LANE_LOG)
     {
@@ -258,11 +272,11 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
     }
     
     //Downsweep
-    //Warp-sized radix propogation fans
+    //Warp-sized-radix propogation fans
     offset = LANE_LOG;
     for (j = 1 << LANE_LOG; j < e_size; j <<= LANE_LOG)
     {
-        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)
             if ((i & (j << LANE_LOG) - 1) >= j)         
                 if ((i + 1 & j - 1) != 0)                
                     prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
@@ -272,8 +286,36 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 }
 ```
 
+# Warp-Sized-Radix Brent-Kung with Fused Upsweep-Downsweep
+fused goes here
+
+```HLSL
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixBrentKungFused(int3 gtid : SV_GroupThreadID)
+{
+    int offset = 0;
+    for (int j = 1; j < (e_size >> 1); j <<= LANE_LOG)
+    {
+        for (int i = gtid.x; i < (e_size >> offset); i += GROUP_SIZE)
+            prefixSumBuffer[((i + 1) << offset) - 1] += WavePrefixSum(prefixSumBuffer[((i + 1) << offset) - 1]);
+        DeviceMemoryBarrierWithGroupSync();
+        
+        for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)
+            if ((i & (j << LANE_LOG) - 1) >= j)         
+                if ((i + 1 & j - 1) != 0)                
+                    prefixSumBuffer[i] += WaveReadLaneFirst(prefixSumBuffer[((i >> offset) << offset) - 1]);
+        offset += LANE_LOG;
+    }
+    DeviceMemoryBarrierWithGroupSync();
+    
+    for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)              
+        prefixSumBuffer[i] += WaveReadLaneFirst(prefixSumBuffer[((i >> offset) << offset) - 1]);
+}
+```
+
 # Warp-Sized Radix Sklansky
 ![WarpSklansky](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e7dd3c56-334f-431a-a7bf-0d30fa64ea9a)
+
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
 void RadixSklanskyAdvanced(int3 gtid : SV_GroupThreadID)
@@ -305,7 +347,7 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 {
     const int partitions = e_size >> LANE_LOG;
     
-    //First kogge-stone warp scan without passing in passing in aggregate
+    //Single kogge-stone warp scan without passing in passing in aggregate
     prefixSumBuffer[gtid.x] += WavePrefixSum(prefixSumBuffer[gtid.x]);
     
     //Walk up partitions, passing in the agrregate as we go
