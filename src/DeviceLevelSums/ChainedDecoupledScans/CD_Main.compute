@@ -271,6 +271,11 @@ void CD_Main(int3 gtid : SV_GroupThreadID)
     } while (partitionIndex + THREAD_BLOCKS < PARTITIONS);
 }
 
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
 [numthreads(GROUP_SIZE, 1, 1)]
 void CD_Main_Timing(int3 gtid : SV_GroupThreadID)
 {
@@ -312,57 +317,54 @@ void CD_Main_Timing(int3 gtid : SV_GroupThreadID)
             GroupMemoryBarrierWithGroupSync();
             
             uint aggregate = 0;
-            if (T_PART_INDEX != 0)
+            int indexOffset = 0;
+            do
             {
-                int indexOffset = 0;
-                do
+                if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
                 {
-                    if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                     {
-                        for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                        uint flagPayload = b_state[i];
+                        const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (prefixIndex < gapIndex)
                         {
-                            uint flagPayload = b_state[i];
-                            const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
-                            const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                            if (prefixIndex < gapIndex)
+                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            if (gtid.x == 0)
                             {
-                                aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
-                                if (gtid.x == 0)
-                                {
                                 //use flagPayload as a dummy variable, as we are done with it, because 
                                 //InterlockedExchange is the easiest way of updating the global flag payload
                                 //InterlockedCompareStore appears to be significantly slower
-                                    InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + g_sharedMem[T_EXACT_SIZE - 1] << 2), flagPayload);
-                                    InterlockedOr(g_sharedMem[0], 0x80000000);
-                                    flagPayload = g_sharedMem[1];
-                                    g_sharedMem[1] = aggregate;
-                                    aggregate = flagPayload;
-                                }
-                                break;
+                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + g_sharedMem[T_EXACT_SIZE - 1] << 2), flagPayload);
+                                InterlockedOr(g_sharedMem[0], 0x80000000);
+                                flagPayload = g_sharedMem[1];
+                                g_sharedMem[1] = aggregate;
+                                aggregate = flagPayload;
                             }
-                            else
-                            {
-                                aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
-                                indexOffset += gapIndex;
-                                break;
-                            }
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                            indexOffset += gapIndex;
+                            break;
                         }
                     }
-                } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
-                GroupMemoryBarrierWithGroupSync();
+                }
+            } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
+            GroupMemoryBarrierWithGroupSync();
             
-                //propogate aggregate values
-                if (gtid.x == 0)
-                    g_sharedMem[0] &= 0x7FFFFFFF;
-                else
-                    aggregate = WaveReadLaneFirst(g_sharedMem[1]);
-                GroupMemoryBarrierWithGroupSync();
-                if (gtid.x == 0)
-                    g_sharedMem[1] = aggregate;
-                if (gtid.x < 2)
-                    aggregate = WaveReadLaneAt(aggregate, 1);
-            }
-            
+            //propogate aggregate values
+            if (gtid.x == 0)
+                g_sharedMem[0] &= 0x7FFFFFFF;
+            else
+                aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+            GroupMemoryBarrierWithGroupSync();
+            if (gtid.x == 0)
+                g_sharedMem[1] = aggregate;
+            if (gtid.x < 2)
+                aggregate = WaveReadLaneAt(aggregate, 1);
+              
             const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
             for (int i = LANE + WAVE_PART_START; i < wavePartEnd; i += LANE_COUNT)
                 b_prefixSum[i + T_PART_START] = g_sharedMem[i] + (i < wavePartEnd - 1 ? prev : aggregate);

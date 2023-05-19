@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class PrefixSumDispatcher : ScanBase
+public class PrefixSumSurveyDispatcher : ScanBase
 {
     protected enum TestType
     {

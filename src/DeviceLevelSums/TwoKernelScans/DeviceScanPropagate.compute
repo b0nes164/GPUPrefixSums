@@ -3,8 +3,8 @@
  * 
  * Scan:    Scan Then Propagate
  *
- * Variant: A granular scan kernel using Brent-Kung-Blelloch as the underlying scan. The last 
- *          threadblock to complete then performs a second Brent-Kung-Blelloch on the threadblock
+ * Variant: A granular scan kernel using Brent-Kung as the underlying scan. The last 
+ *          threadblock to complete then performs a second Brent-Kung on the threadblock
  *          aggregates. The second kernel propagates these aggregates.
  *          
  * Note:    Max threadblocks is 1024 in this implementation, because of the scan used

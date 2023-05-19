@@ -1,0 +1,235 @@
+/******************************************************************************************************************
+ * Block Level Raking Reduce Scan
+ *
+ * Variant: Partition size equal to maximum shared memory. Partition divided
+ *          into wave partitions, and each wave partition is divided into 
+ *          thread partitions. Each computes a serial scan.
+ *
+ * Notes: **Unrolls and preprocessor macros must be manually changed for AMD**
+ *
+ * Author:  Thomas Smith 5/9/2023
+ *
+ * License: The Unlicense
+ *          This is free and unencumbered software released into the public domain.
+ *          For more information, please refer to the repository license or <https://unlicense.org>
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel BlockRakingReduce
+#pragma kernel BlockRakingReduceTiming
+
+#define PARTITION_SIZE      8192
+#define GROUP_SIZE          1024
+#define PART_LOG            13
+
+// For Nvidia; change depending on hardware
+#define LANE_COUNT  32  
+#define LANE_MASK   31
+#define LANE_LOG    5
+
+#define WAVES_PER_GROUP         32
+#define WAVES_PER_GROUP_LOG     5
+#define WAVE_PARTITION_SIZE     256
+#define WAVE_PARTITION_MASK     255 
+#define WAVE_PART_LOG           8
+#define THREAD_PARTITION_SIZE   8
+#define THREAD_PART_LOG         3
+
+//AMD
+/*
+ * #define LANE_COUNT           64  
+ * #define LANE_MASK            63
+ * #define LANE_LOG             6 
+ *
+ * #define WAVES_PER_GROUP         16
+ * #define WAVES_PER_GROUP_LOG     4
+ * #define WAVE_PARTITION_SIZE     512
+ * #define WAVE_PARTITION_MASK     511 
+ * #define WAVE_PART_LOG           9
+ * #define THREAD_PARTITION_SIZE   8
+ * #define THREAD_PART_LOG         3
+ */
+
+//Alternative, non-hard coded preprocessor macros
+/*
+ * #define WAVES_PER_GROUP          (GROUP_SIZE >> LANE_LOG)
+ * #define WAVES_PER_GROUP_LOG      (int)floor(log2(WAVES_PER_GROUP))
+ * #define WAVE_PARTITION_SIZE      (PARTITION_SIZE >> WAVES_PER_GROUP_LOG)
+ * #define WAVE_PARTITION_MASK      (WAVE_PARTITION_SIZE - 1)
+ * #define WAVE_PART_LOG            (int)floor(log2(WAVE_PARTITION_SIZE))
+ * #define THREAD_PARTITION_SIZE    (WAVE_PARTITION_SIZE >> LANE_LOG)
+ * #define THREAD_PART_LOG          (int)floor(log2(THREAD_PARTITION_SIZE))
+ */
+
+#define LANE                (gtid.x & LANE_MASK)
+#define WAVE_INDEX          (gtid.x >> LANE_LOG)
+#define SPINE_INDEX         (((gtid.x + 1) << WAVE_PART_LOG) - 1)
+#define SUB_PARTITIONS      ((e_size & WAVE_PARTITION_MASK) ? \
+                            (e_size >> WAVE_PART_LOG) + 1 : \
+                            e_size >> WAVE_PART_LOG)
+#define SUB_PARTS_FLOOR     ((SUB_PARTITIONS >> WAVES_PER_GROUP_LOG) << WAVES_PER_GROUP_LOG) 
+#define THREAD_PART_START   (WAVE_INDEX << WAVE_PART_LOG) + (LANE << THREAD_PART_LOG)
+#define THREAD_PART_END     (WAVE_INDEX << WAVE_PART_LOG) + (LANE + 1 << THREAD_PART_LOG)
+#define PARTITION_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
+#define PARTITION_START     ((k >> WAVES_PER_GROUP_LOG) << PART_LOG)
+#define EXACT_SIZE          (e_size - PARTITION_START)
+#define EXACT_THREAD_END    (THREAD_PART_END > EXACT_SIZE ? \
+                            ((EXACT_SIZE - 1 >> THREAD_PART_LOG) == (THREAD_PART_END - 1 >> THREAD_PART_LOG) ? \
+                            EXACT_SIZE : 0) : THREAD_PART_END)
+#define EXACT_PART_END      ((PARTITION_END > EXACT_SIZE ? \
+                            ((EXACT_SIZE - 1 >> WAVE_PART_LOG) == (PARTITION_END - 1 >> WAVE_PART_LOG) ? \
+                            EXACT_SIZE : 0) : PARTITION_END))
+
+extern int e_size;
+extern int e_repeats;
+
+RWBuffer<uint> b_prefixSum;
+globallycoherent RWBuffer<uint> b_state;
+groupshared uint g_sharedMem[PARTITION_SIZE];
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += (GROUP_SIZE << 8))
+        b_prefixSum[i] = 1;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void BlockRakingReduce(int3 gtid : SV_GroupThreadID)
+{   
+    uint aggregate = 0;
+    for (int k = WAVE_INDEX; k < SUB_PARTS_FLOOR; k += WAVES_PER_GROUP)
+    {
+        //per thread sub-sub partition aggregate
+        g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+        for (int j = THREAD_PART_START + 1; j < THREAD_PART_END; ++j)
+            g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+        
+        //per warp thread partition aggregate
+        g_sharedMem[THREAD_PART_END - 1] += WavePrefixSum(g_sharedMem[THREAD_PART_END - 1]);
+        GroupMemoryBarrierWithGroupSync();
+         
+        //groupwide partition aggregate
+        if (gtid.x < WAVES_PER_GROUP)
+            g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]);
+        GroupMemoryBarrierWithGroupSync();
+        
+        const int t = THREAD_PART_END != PARTITION_END && WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[THREAD_PART_START - 1]) : 0;
+        GroupMemoryBarrierWithGroupSync();
+        g_sharedMem[THREAD_PART_END - 1] += t + aggregate;
+        GroupMemoryBarrierWithGroupSync();
+        
+        [unroll(7)]
+        for (j = THREAD_PART_START; j < THREAD_PART_END - 1; ++j)
+            b_prefixSum[j + PARTITION_START] = g_sharedMem[j] + (LANE || WAVE_INDEX ? g_sharedMem[THREAD_PART_START - 1] : aggregate);
+        b_prefixSum[j + PARTITION_START] = g_sharedMem[j];
+        
+        aggregate = WaveReadLaneFirst(g_sharedMem[PARTITION_SIZE - 1]);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    //Offsize pass
+    GroupMemoryBarrierWithGroupSync();
+    
+    int threadPartEnd = EXACT_THREAD_END;
+    if(threadPartEnd)
+    {
+        g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+        for (int j = THREAD_PART_START + 1; j < threadPartEnd; ++j)
+            g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+        
+        //per warp thread partition aggregate
+        g_sharedMem[threadPartEnd - 1] += WavePrefixSum(g_sharedMem[threadPartEnd - 1]);
+        GroupMemoryBarrierWithGroupSync();
+         
+        //groupwide partition aggregate
+        if (gtid.x < WAVES_PER_GROUP)
+        {
+            int t = SPINE_INDEX;
+            if (t > EXACT_SIZE - 1)
+                t = (EXACT_SIZE - 1 >> WAVE_PART_LOG) == gtid.x ? EXACT_SIZE - 1 : PARTITION_SIZE - gtid.x;
+            g_sharedMem[t] += WavePrefixSum(g_sharedMem[t]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+        const int t = threadPartEnd != EXACT_PART_END && WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[THREAD_PART_START - 1]) : 0;
+        GroupMemoryBarrierWithGroupSync();
+        g_sharedMem[threadPartEnd - 1] += aggregate + t;
+        GroupMemoryBarrierWithGroupSync();
+        
+        for (j = THREAD_PART_START; j < threadPartEnd - 1; ++j)
+            b_prefixSum[j + PARTITION_START] = g_sharedMem[j] + (LANE || WAVE_INDEX ? g_sharedMem[THREAD_PART_START - 1] : aggregate);
+        b_prefixSum[j + PARTITION_START] = g_sharedMem[j];
+    }
+}
+
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
+[numthreads(GROUP_SIZE, 1, 1)]
+void BlockRakingReduceTiming(int3 gtid : SV_GroupThreadID)
+{
+    for(int g = 0; g < e_repeats; ++g)
+    {
+        uint aggregate = 0;
+        for (int k = WAVE_INDEX; k < SUB_PARTS_FLOOR; k += WAVES_PER_GROUP)
+        {
+            g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+            for (int j = THREAD_PART_START + 1; j < THREAD_PART_END; ++j)
+                g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+        
+            g_sharedMem[THREAD_PART_END - 1] += WavePrefixSum(g_sharedMem[THREAD_PART_END - 1]);
+            GroupMemoryBarrierWithGroupSync();
+         
+            if (gtid.x < WAVES_PER_GROUP)
+                g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]);
+            GroupMemoryBarrierWithGroupSync();
+        
+            const int t = THREAD_PART_END != PARTITION_END && WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[THREAD_PART_START - 1]) : 0;
+            GroupMemoryBarrierWithGroupSync();
+            g_sharedMem[THREAD_PART_END - 1] += t + aggregate;
+            GroupMemoryBarrierWithGroupSync();
+            
+            [unroll(7)]
+            for (j = THREAD_PART_START; j < THREAD_PART_END - 1; ++j)
+                b_prefixSum[j + PARTITION_START] = g_sharedMem[j] + (LANE || WAVE_INDEX ? g_sharedMem[THREAD_PART_START - 1] : aggregate);
+            b_prefixSum[j + PARTITION_START] = g_sharedMem[j];
+        
+            aggregate = WaveReadLaneFirst(g_sharedMem[PARTITION_SIZE - 1]);
+            GroupMemoryBarrierWithGroupSync();
+        }
+        
+        GroupMemoryBarrierWithGroupSync();
+        int threadPartEnd = EXACT_THREAD_END;
+        if (threadPartEnd)
+        {
+            g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+            for (int j = THREAD_PART_START + 1; j < threadPartEnd; ++j)
+                g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+        
+            g_sharedMem[threadPartEnd - 1] += WavePrefixSum(g_sharedMem[threadPartEnd - 1]);
+            GroupMemoryBarrierWithGroupSync();
+         
+            if (gtid.x < WAVES_PER_GROUP)
+            {
+                int t = SPINE_INDEX;
+                if (t > EXACT_SIZE - 1)
+                    t = (EXACT_SIZE - 1 >> WAVE_PART_LOG) == gtid.x ? EXACT_SIZE - 1 : PARTITION_SIZE - gtid.x;
+                g_sharedMem[t] += WavePrefixSum(g_sharedMem[t]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            const int t = threadPartEnd != EXACT_PART_END && WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[THREAD_PART_START - 1]) : 0;
+            GroupMemoryBarrierWithGroupSync();
+            g_sharedMem[threadPartEnd - 1] += aggregate + t;
+            GroupMemoryBarrierWithGroupSync();
+        
+            for (j = THREAD_PART_START; j < threadPartEnd - 1; ++j)
+                b_prefixSum[j + PARTITION_START] = g_sharedMem[j] + (LANE || WAVE_INDEX ? g_sharedMem[THREAD_PART_START - 1] : aggregate);
+            b_prefixSum[j + PARTITION_START] = g_sharedMem[j];
+        }
+    }
+}

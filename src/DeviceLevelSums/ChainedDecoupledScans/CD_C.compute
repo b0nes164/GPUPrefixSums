@@ -235,8 +235,9 @@ void CD_C(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 }
 
 /******************************************************************************
- * This is timing version of the scan. It is identical in every way to the above
- * scan, except for the fact that it can perform multiple loops of the algorithm.
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
  ******************************************************************************/
 [numthreads(GROUP_SIZE, 1, 1)]
 void CD_C_Timing(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)

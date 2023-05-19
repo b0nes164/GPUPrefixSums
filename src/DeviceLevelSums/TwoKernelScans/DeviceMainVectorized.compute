@@ -3,7 +3,7 @@
  * 
  * Scan:    Vectorized Warp-Sized-Radix Raking Reduce then Scan
  *
- * Variant: A single reduction kernel using Brent-Kung-Blelloch on the threadblock aggregates,
+ * Variant: A single reduction kernel using Brent-Kung on threadblock aggregates,
  *          followed by a second kernel where the aggregrates are passed into a warp-sized
  *          radix reduce scan. Uses vector loads and stores.
  *          
@@ -298,6 +298,11 @@ void DeviceMainVectorizedScan(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupI
     }
 }
 
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
 [numthreads(GROUP_SIZE, 1, 1)]
 void DeviceMainVectorizedReduceTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 {

@@ -188,6 +188,11 @@ void CD_SPEED_Vectorized(int3 gtid : SV_GroupThreadID)
     } while (partitionIndex + THREAD_BLOCKS < PARTITIONS);
 }
 
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
 [numthreads(GROUP_SIZE, 1, 1)]
 void CD_SPEED_Vectorized_Timing(int3 gtid : SV_GroupThreadID)
 {

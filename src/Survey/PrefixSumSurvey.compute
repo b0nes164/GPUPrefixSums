@@ -486,7 +486,7 @@ void ReduceScanLarge(int3 gtid : SV_GroupThreadID)
 void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 {
     //Upsweep
-    //Warp-sized radix KoggeStone embedded into BrentKung
+    //Warp-sized-radix KoggeStone embedded into BrentKung
     int offset = 0;
     for (int j = e_size; j > 1; j >>= LANE_LOG)
     {
@@ -504,7 +504,7 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
     offset = LANE_LOG;
     for (j = 1 << LANE_LOG; j < e_size; j <<= LANE_LOG)
     {
-        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)
             if ((i & (j << LANE_LOG) - 1) >= j)         
                 if ((i + 1 & j - 1) != 0)                
                     prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
@@ -517,19 +517,22 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 void RadixBrentKungFused(int3 gtid : SV_GroupThreadID)
 {
     int offset = 0;
-    for (int j = 1; j < e_size; j <<= LANE_LOG)
+    for (int j = 1; j < (e_size >> 1); j <<= LANE_LOG)
     {
         for (int i = gtid.x; i < (e_size >> offset); i += GROUP_SIZE)
             prefixSumBuffer[((i + 1) << offset) - 1] += WavePrefixSum(prefixSumBuffer[((i + 1) << offset) - 1]);
         DeviceMemoryBarrierWithGroupSync();
         
-        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)
             if ((i & (j << LANE_LOG) - 1) >= j)         
                 if ((i + 1 & j - 1) != 0)                
                     prefixSumBuffer[i] += WaveReadLaneFirst(prefixSumBuffer[((i >> offset) << offset) - 1]);
-        DeviceMemoryBarrierWithGroupSync();
         offset += LANE_LOG;
     }
+    DeviceMemoryBarrierWithGroupSync();
+    
+    for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)              
+        prefixSumBuffer[i] += WaveReadLaneFirst(prefixSumBuffer[((i >> offset) << offset) - 1]);
 }
 
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -544,7 +547,7 @@ void RadixSklanskyLarge(int3 gtid : SV_GroupThreadID)
     int offset = LANE_LOG;
     for (int j = 1 << LANE_LOG; j < e_size; j <<= 1)
     {
-        for (int i = gtid.x; i < e_size; i += GROUP_SIZE)
+        for (int i = gtid.x + j; i < e_size; i += GROUP_SIZE)
             if ((i & j) != 0)
                 prefixSumBuffer[i] += prefixSumBuffer[((i >> offset) << offset) - 1];
         DeviceMemoryBarrierWithGroupSync();

@@ -3,9 +3,9 @@
  * 
  * Scan:    Reduce Then Scan
  *
- * Variant: A single reduction kernel using Brent-Kung-Blelloch on the threadblock aggregates,
+ * Variant: A single reduction kernel using Brent-Kung on the threadblock aggregates,
  *          followed by a second kernel where the aggregrates are passed into a second more
- *          granular Brent-Kung-Blelloch.
+ *          granular Brent-Kung.
  *          
  * Note:    Max threadblocks is 1024 in this implementation, because of the scan used
  *          on the spine of the reduction.
