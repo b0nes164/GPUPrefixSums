@@ -5,9 +5,17 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
 
 **To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself. (Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems. This is not legal advice.)** 
 
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # Important Notes
 <details>
-  <summary>This project will not work on AMD or integrated graphics hardware unless preprocessor macros for wave/warp size and loop unrolls are manually changed in the desired scan file. Furthermore, this project has only been tested on my 2080 super, so it may not work on non-Nvidia hardware.</summary>
+  <summary>Currently, this project does not work on AMD or integrated graphics hardware.</summary>
 &nbsp;
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
@@ -67,7 +75,17 @@ As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windo
   <summary>All scans are inclusive.</summary>
 </details>
 
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # To Use This Project
+
 1. Download or clone the repository.
 2. Drag the contents of `src` into a desired folder within a Unity project.
 3. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
@@ -77,11 +95,16 @@ As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windo
 If you did this correctly you should see this in the inspector:
 
 
-
 ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/70bb5097-fff2-44e5-b396-2930a059fbad)
- 
- # Testing Suite
- ![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
+<details>
+
+<summary>
+
+## Testing Suite
+
+</summary>
+  
+![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
 
 Every scan dispatcher inherits a testing suite that can be controlled in the inspector.
 
@@ -105,6 +128,16 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 
 + `Advanced Timing Mode` switches from the default kernel to a timing-specific kernel which is almost identical, but can perform `Scan Repeats` repititions of the algorithm **inside of the kernel**. However, as this can sometimes mean using an additional register to control the loop or additional computation to limit indexes to the buffer, **this is only an approximation of the kernel**. See Testing Methodology.
 
+</details>
+
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # Prefix Sum Survey
 
 A prefix sum blah blah blah
