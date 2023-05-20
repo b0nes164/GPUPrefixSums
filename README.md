@@ -1,19 +1,27 @@
 # GPU Prefix Sums
 ![Prefix Sum Speeds, in Unity Editor, RTX 2080 Super](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/7fd486be-cfd5-4a03-b24b-2d850431d8fd)
 
-This project is a survey of GPU prefix sums, ranging from the warp to the device level, with the aim of providing developers an uncompiled look at modern prefix sum implementations. In particular, this project was inspired by Duane Merill's [research](https://research.nvidia.com/person/duane-merrill%2520iii) and includes various implementations of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back), which is how we are able to reach speeds approaching `MemCopy()`. Finally, this project was written in HLSL for compute shaders, though with reasonable knowledge of GPU programming it is easily portable. 
+This project is a survey of GPU prefix sums, ranging from the warp to the device level, with the aim of providing developers an uncompiled look at modern prefix sum implementations. In particular, this project was inspired by Duane Merill's [research](https://research.nvidia.com/person/duane-merrill%2520iii) and includes implementations of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back), which is how we are able to reach speeds approaching `MemCopy()`. Finally, this project was written in HLSL for compute shaders, though with reasonable knowledge of GPU programming it is easily portable. 
 
-**To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself. (Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems. This is not legal advice.).** 
+**To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself. (Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems. This is not legal advice.)** 
 
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # Important Notes
 <details>
-  <summary>This project will not work on AMD or integrated graphics hardware unless preprocessor macros for wave/warp size and loop unrolls are manually changed in the desired scan file. Furthermore, this project has only been tested on my 2080 super, so the scans still may not work on non-Nvidia hardware.</summary>
+  <summary>Currently, this project does not work on AMD or integrated graphics hardware.</summary>
 &nbsp;
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Unfortunately, AMD, Nvidia, and integrated graphics all have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware and then compile a targetted shader to use. Although Unity does have the `multi_compile` functionality, it is very cumbersome because it means maintaining and compiling a copy of each kernel for each hardware case. 
+Unfortunately, AMD, Nvidia, and integrated graphics all have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware at runtime to compile a targetted shader variant. Although Unity does have the `multi_compile` functionality, it is a very cumbersome solution because it means maintaining and compiling a copy of each kernel for each hardware case. 
 
-Eventually I plan on making a tool to parse my Nvidia targetted shader and then output a `multi_compile` version for all hardware cases, but until then non-Nvidia users will have to manually change the preprocessor macros and unrolls in the .compute file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
+Eventually I plan on making a tool that parse my Nvidia targetted shader to output a `multi_compile` version for all hardware cases, but until then non-Nvidia users will have to manually change the preprocessor macros and unrolls in the `.compute` file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
 &nbsp;  
@@ -33,7 +41,7 @@ Eventually I plan on making a tool to parse my Nvidia targetted shader and then 
 &nbsp;  
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we are effectively creating threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
+Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we effectively create threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
 &nbsp;  
   
 &nbsp;  
@@ -44,9 +52,9 @@ Decoupled Lookback relies on two concepts to function properly: guaranteed forwa
 &nbsp;  
   
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I have chosen to not include it until Unity moves the feature out of beta.
+In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I will not include it until Unity moves the feature out of beta.
   
-Initially, I tried using two seperate 32-bit values for the flag and aggregate, using an atomic write for the aggregate then an atomic write for the flag. For whatever reason, this did not work.
+Initially, I tried using two seperate 32-bit values for the flag and aggregate, using an atomic write for the aggregate then an atomic write for the flag. This did not work.
 &nbsp;  
 
 &nbsp; 
@@ -67,21 +75,36 @@ As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windo
   <summary>All scans are inclusive.</summary>
 </details>
 
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # To Use This Project
+
 1. Download or clone the repository.
 2. Drag the contents of `src` into a desired folder within a Unity project.
-3. Attach the scan dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
-4. Attach the matching compute shader to the game object. All compute shader are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
+3. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
+4. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
 5. Ensure the sliders are set to nonzero values.
 
 If you did this correctly you should see this in the inspector:
 
 
-
 ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/70bb5097-fff2-44e5-b396-2930a059fbad)
- 
- # Testing Suite
- ![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
+<details>
+
+<summary>
+
+## Testing Suite
+
+</summary>
+  
+![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
 
 Every scan dispatcher inherits a testing suite that can be controlled in the inspector.
 
@@ -105,8 +128,32 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 
 + `Advanced Timing Mode` switches from the default kernel to a timing-specific kernel which is almost identical, but can perform `Scan Repeats` repititions of the algorithm **inside of the kernel**. However, as this can sometimes mean using an additional register to control the loop or additional computation to limit indexes to the buffer, **this is only an approximation of the kernel**. See Testing Methodology.
 
+</details>
+
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 # Prefix Sum Survey
-# Kogge-Stone
+
+A prefix sum blah blah blah
+Inlusive $\sum_{i = 0}{n}x_i$
+Exclusive $\sum_{i = 0}{n - 1}x_i$
+  
+# Basic Scans
+
+<details open>
+
+<summary>
+
+### Kogge-Stone
+
+</summary>
+
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
 
 ```HLSL
@@ -122,7 +169,17 @@ void KoggeStone(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Sklansky
+</details>
+
+<details>
+
+<summary>
+
+### Sklansky
+
+</summary>
+
+
 ![SklanskyFinal](https://user-images.githubusercontent.com/68340554/224912079-b1580955-b702-45f9-887a-7c1003825bf9.png)
 
 ```HLSL
@@ -140,7 +197,16 @@ void Sklansky(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Brent-Kung-Blelloch
+</details>
+
+<details>
+
+<summary>
+
+### Brent-Kung
+
+</summary>
+
 ![BrentKungImage](https://user-images.githubusercontent.com/68340554/224912128-73301be2-0bba-4146-8e20-2f1f3bc7c549.png)
 
 ```HLSL
@@ -171,7 +237,16 @@ void BrentKungBlelloch(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Reduce-Then-Scan
+</details>
+
+<details>
+
+<summary>
+
+### Reduce Scan
+
+</summary>
+
 ![ReduceScanFinal](https://user-images.githubusercontent.com/68340554/224912530-2e1f2851-f531-4271-8246-d13983ccb584.png)
 
 ```HLSL
@@ -231,7 +306,16 @@ void ReduceScan(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Raking Reduce-Scan
+</details>
+
+<details>
+
+<summary>
+
+### Raking Reduce-Scan
+
+</summary>
+
 ![RakingReduceScan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3bc46762-1d61-41aa-aee5-1c492ff76ad6)
 
 ```HLSL
@@ -256,7 +340,31 @@ void RakingReduce(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Warp-Sized-Radix Brent-Kung
+</details>
+
+
+<details>
+
+<summary>
+
+### TItle
+
+</summary>
+
+code + image
+
+</details>
+
+# Warp-Synchronized Scans
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Brent-Kung
+
+</summary>
+
 ![RadixBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d246240a-c088-4a74-a4c9-3cc2de12d1c9)
 
 ```HLSL
@@ -292,7 +400,16 @@ void RadixBrentKungLarge(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Warp-Sized-Radix Brent-Kung with Fused Upsweep-Downsweep
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Brent-Kung with Fused Upsweep-Downsweep
+
+</summary>
+
 ![RadixBKFused](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/4ccfaf59-9864-4405-a89f-f950c70cda2b)
 
 ```HLSL
@@ -319,7 +436,16 @@ void RadixBrentKungFused(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Warp-Sized Radix Sklansky
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Sklansky
+
+</summary>
+
 ![WarpSklansky](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e7dd3c56-334f-431a-a7bf-0d30fa64ea9a)
 
 ```HLSL
@@ -345,7 +471,16 @@ void RadixSklanskyAdvanced(int3 gtid : SV_GroupThreadID)
 }
 ```
 
-# Warp-Sized Radix Reduce-Scan
+</details>
+  
+  <details>
+
+<summary>
+
+### Warp-Sized-Radix Raking Reduce-Scan
+
+</summary>
+
 ![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
 ```HLSL
 [numthreads(LANE_COUNT, 1, 1)]
@@ -365,6 +500,8 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
     }
 }
 ```
+
+</details>
 
 # Block Level Scans
 ![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
