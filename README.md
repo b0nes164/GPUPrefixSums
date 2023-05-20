@@ -4,75 +4,60 @@
 This project is a survey of GPU prefix sums, ranging from the warp to the device level, with the aim of providing developers an uncompiled look at modern prefix sum implementations. In particular, this project was inspired by Duane Merill's [research](https://research.nvidia.com/person/duane-merrill%2520iii) and includes implementations of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back), which is how we are able to reach speeds approaching `MemCopy()`. Finally, this project was written in HLSL for compute shaders, though with reasonable knowledge of GPU programming it is easily portable. 
 
 **To the best of my knowledge, all algorithms included in this project are in the public domain and free to use, as is this project itself. (Chained Scan is licensed under BSD-2, and Blelloch's algorithm was released through GPU Gems. This is not legal advice.)** 
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
+<!-- This content will not appear in the rendered Markdown -->
 
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
-<!-- This content will not appear in the rendered Markdown -->
 # Important Notes
 <details>
-  <summary>Currently, this project does not work on AMD or integrated graphics hardware.</summary>
-&nbsp;
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Unfortunately, AMD, Nvidia, and integrated graphics all have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware at runtime to compile a targetted shader variant. Although Unity does have the `multi_compile` functionality, it is a very cumbersome solution because it means maintaining and compiling a copy of each kernel for each hardware case. 
+  <summary>Currently, this project does not work on AMD or integrated graphics hardware.</summary>
+  
+</br>Unfortunately, AMD, Nvidia, and integrated graphics all have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware at runtime to compile a targetted shader variant. Although Unity does have the `multi_compile` functionality, it is a very cumbersome solution because it means maintaining and compiling a copy of each kernel for each hardware case.
 
 Eventually I plan on making a tool that parse my Nvidia targetted shader to output a `multi_compile` version for all hardware cases, but until then non-Nvidia users will have to manually change the preprocessor macros and unrolls in the `.compute` file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
-&nbsp;  
 
   Comment out or delete the Nvidia values, and uncomment the AMD values. Next, search for the `[unroll(x)]` attributes and change the value to match the loop iterations at the new wave size:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6e20a567-3df5-45ab-ab5b-448fbc5bb2a1)
-
-  
-&nbsp;   
-  
-&nbsp;   
+ 
 </details>
 
 <details>
+  
   <summary>Chained Scan with Decoupled Lookback is not guaranteed to work on Nvidia cards older than Volta or AMD cards older than ????.</summary>
-&nbsp;  
-  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we effectively create threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
-&nbsp;  
-  
-&nbsp;  
+
+</br>Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we effectively create threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
+
 </details>
 
 <details>
-  <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is $2^{30}$.</summary>
-&nbsp;  
   
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
-In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I will not include it until Unity moves the feature out of beta.
-  
-Initially, I tried using two seperate 32-bit values for the flag and aggregate, using an atomic write for the aggregate then an atomic write for the flag. This did not work.
-&nbsp;  
+  <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is 2^30.</summary>
 
-&nbsp; 
+</br>In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I will not include it until Unity moves the feature out of beta.
+  
 </details>
 
 <details>
+  
   <summary>DX12 is a must as well as a minimum Unity version of 2021.1 or later</summary>
-&nbsp;  
-  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
-&nbsp;  
-  
-&nbsp; 
+
+</br>As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12), we need `pragma use_dxc` [to access shader model 6.0](https://forum.unity.com/threads/unity-is-adding-a-new-dxc-hlsl-compiler-backend-option.1086272/).
+
 </details>
 
 <details>
+  
   <summary>All scans are inclusive.</summary>
+  
 </details>
 
 <!-- This content will not appear in the rendered Markdown -->
@@ -84,6 +69,7 @@ As we make heavy use of [WaveIntrinsics](https://learn.microsoft.com/en-us/windo
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
+
 # To Use This Project
 
 1. Download or clone the repository.
@@ -122,7 +108,7 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 
 + `Record Timing Data` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then writes each indivual kernel completion time to a `.csv` file. Note that this has the same shortcomings as `Timing Test`.
 
-+ `Validate Powers of Two` performs a single prefix sum at all powers of two which the prefix sum is designed for. Typically for the device-level scans this is $2^{21}$ to $2^{28}$, $2^{28}$ being the largest sized buffer that Unity can allocate.
++ `Validate Powers of Two` performs a single prefix sum at all powers of two which the prefix sum is designed for. Typically for the device-level scans this is 2^21 to 2^28, 2^28 being the largest sized buffer that Unity can allocate.
 
 + `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes. This test can take quite some time.
 
@@ -140,22 +126,18 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 <!-- This content will not appear in the rendered Markdown -->
 # Prefix Sum Survey
 
-A prefix sum blah blah blah
-Inlusive $\sum_{i = 0}{n}x_i$
-Exclusive $\sum_{i = 0}{n - 1}x_i$
-  
+A prefix sum blah blah blah. Exclusive sum blah blah. Inclusive sum blah blah.
+
 # Basic Scans
-
 <details open>
-
 <summary>
 
 ### Kogge-Stone
-
+  
 </summary>
 
 ![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
-
+  
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
 void KoggeStone(int3 gtid : SV_GroupThreadID)
@@ -168,7 +150,7 @@ void KoggeStone(int3 gtid : SV_GroupThreadID)
     }
 }
 ```
-
+  
 </details>
 
 <details>
@@ -473,7 +455,7 @@ void RadixSklanskyAdvanced(int3 gtid : SV_GroupThreadID)
 
 </details>
   
-  <details>
+<details>
 
 <summary>
 
@@ -503,7 +485,16 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 
 </details>
 
-# Block Level Scans
+# Block-Level Scan Pattern
+
+<details>
+
+<summary>
+
+### Block-Level Scan Pattern
+
+</summary>
+
 ![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
 
 Explanation goes here...
@@ -549,3 +540,8 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
     }
 }
 ```
+
+</details>
+  
+# Device-Level Scan Pattern
+# Chained Scan With Decoupled Lookback
