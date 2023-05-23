@@ -454,19 +454,20 @@ void RadixSklanskyAdvanced(int3 gtid : SV_GroupThreadID)
 ```
 
 </details>
-  
+
 <details>
 
 <summary>
 
-### Warp-Sized-Radix Raking Reduce-Scan
+### Warp-Sized-Radix Serial
 
 </summary>
 
-![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
+![RadixSerial](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/11dccbcb-7ab4-4a99-aacb-704d0c4581fd)
+
 ```HLSL
 [numthreads(LANE_COUNT, 1, 1)]
-void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
+void RadixSerial(int3 gtid : SV_GroupThreadID)
 {
     const int partitions = e_size >> LANE_LOG;
     
@@ -480,6 +481,47 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
         const int t = gtid.x + partitionStart;
         prefixSumBuffer[t] += WavePrefixSum(prefixSumBuffer[t]) + prefixSumBuffer[partitionStart - 1];
     }
+}
+```
+
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Raking Reduce-Scan
+
+</summary>
+
+![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
+```HLSL
+#define LANE                (gtid.x & LANE_MASK)
+#define WAVE_INDEX          (gtid.x >> LANE_LOG)
+#define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
+#define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
+#define SPINE_INDEX         (((gtid.x + 1) << WAVE_PART_LOG) - 1)
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
+{
+    g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START];
+    g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+
+    for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < WAVE_PART_END; i += LANE_COUNT)
+    {
+        g_sharedMem[i] = b_prefixSum[i];
+        g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (gtid.x < WAVES_PER_GROUP)
+        g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]) + aggregate;
+    GroupMemoryBarrierWithGroupSync();
+
+    const uint prev = WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : aggregate;
+    for (int i = LANE + WAVE_PART_START; i < WAVE_PART_END; i += LANE_COUNT)
+        b_prefixSum[i] = g_sharedMem[i] + (i < WAVE_PART_END - 1 ? prev : 0);
 }
 ```
 
