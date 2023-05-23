@@ -501,16 +501,27 @@ Explanation goes here...
 
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
 ```HLSL
+#define PARTITION_SIZE          32  //The number of elements in a partition
+#define GROUP_SIZE              16  //The number of threads in a threadblock
+#define LANE_COUNT              4   //The number of threads in a warp
+#define LANE_MASK               3   //A bit-mask used to determine a thread's lane
+#define LANE_LOG                2   //log2(LANE_COUNT)
+#define WAVES_PER_GROUP         4   //The number of warps per threadblock
+#define WAVE_PARTITION_SIZE     8   //The number of elements a warp processes per partition
+#define WAVE_PART_LOG           3   //log2(WAVE_PARTITION_SIZE)
+
 #define LANE                (gtid.x & LANE_MASK)
 #define WAVE_INDEX          (gtid.x >> LANE_LOG)
 #define SPINE_INDEX         (((gtid.x + 1) << WAVE_PART_LOG) - 1)
-#define PARTITIONS          ((e_size & PARTITION_MASK) ? \
-                            (e_size >> PART_LOG) + 1 : \
-                            e_size >> PART_LOG)
+#define PARTITIONS          (e_size >> PART_LOG)
 #define PARTITION_START     (partitionIndex << PART_LOG)
 #define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
 #define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
 
+extern int e_size;                                //The size of the buffer, this is set by host CPU code
+RWBuffer<uint> b_prefixSum;                       //The buffer to be prefix_summed
+groupshared uint g_sharedMem[PARTITION_SIZE];     //The array of shared memory we use to compute intermediate values
+  
 [numthreads(GROUP_SIZE, 1, 1)]
 void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 {
@@ -552,11 +563,53 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 ### Device-Level Scan Pattern
 
 </summary>
+
+## Reduce
   
 ![Device 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a95e4647-440b-42d9-ae3e-b7a34247141d)
 
 ```HLSL
-  foo
+#define SUB_PARTITION_SIZE      32  //The size of the threadblock's subpartition.
+#define GROUP_SIZE              16  //The number of threads in a threadblock
+#define THREAD_BLOCKS           8   //The number of threadblocks dispatched
+#define TBLOCK_LOG              3   //log2(THREAD_BLOCKS)
+
+#define LANE_COUNT              4   //The number of threads in a warp
+#define LANE_MASK               3   //A bit-mask used to determine a thread's lane
+#define LANE_LOG                2   //log2(LANE_COUNT)
+#define WAVES_PER_GROUP         4   //The number of warps per threadblock
+#define WAVE_PARTITION_SIZE     8   //The number of elements a warp processes per subpartition
+#define WAVE_PART_LOG           3   //log2(WAVE_PARTITION_SIZE)
+
+#define PARTITION_SIZE      (e_size >> TBLOCK_LOG)
+#define LANE                (gtid.x & LANE_MASK)
+#define WAVE_INDEX          (gtid.x >> LANE_LOG)
+#define SPINE_INDEX         (((gtid.x + 1) << WAVE_PART_LOG) - 1)
+#define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
+#define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
+#define PARTITION_START     (gid.x * PARTITION_SIZE)
+#define SUB_PART_START      (subPartitionIndex << SUB_PART_LOG)
+#define SUB_PARTITIONS      (PARTITION_SIZE >> SUB_PART_LOG)
+
+extern int e_size;                                    //The size of the buffer, this is set by host CPU code
+RWBuffer<uint> b_prefixSum;                           //The buffer to be prefix_summed
+groupshared uint g_sharedMem[SUB_PARTITION_SIZE];     //The array of shared memory we use to compute intermediate values
+  
+[numthreads(GROUP_SIZE, 1, 1)]
+void DeviceMainReduce(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
+{
+    uint waveAggregate = 0;
+    const int partitionEnd = (gid.x + 1) * PARTITION_SIZE;
+    for (int j = gtid.x + PARTITION_START; j < partitionEnd; j += GROUP_SIZE)
+        waveAggregate += WaveActiveSum(b_prefixSum[j]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (LANE == 0)
+        g_sharedMem[WAVE_INDEX] = waveAggregate;
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (gtid.x < WAVES_PER_GROUP)
+        g_sharedMem[gtid.x] = WaveActiveSum(g_sharedMem[gtid.x]);
 ```
   
 Explanation goes here...
@@ -564,14 +617,69 @@ Explanation goes here...
 ![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/0641660d-db0d-48ad-8ecf-3d6312825ffd)
 
 ```HLSL
-foo
+    if (gtid.x == 0)
+    {
+        InterlockedAdd(b_state[gid.x], g_sharedMem[gtid.x]);
+        InterlockedAdd(b_state[THREAD_BLOCKS], 1, g_sharedMem[0]);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (WaveReadLaneFirst(g_sharedMem[0]) == THREAD_BLOCKS - 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        if (gtid.x < THREAD_BLOCKS)
+        {
+            g_sharedMem[gtid.x] = b_state[gtid.x];
+            g_sharedMem[gtid.x] += WavePrefixSum(g_sharedMem[gtid.x]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (gtid.x < (THREAD_BLOCKS >> LANE_LOG))
+            g_sharedMem[((gtid.x + 1) << LANE_LOG) - 1] += WavePrefixSum(g_sharedMem[((gtid.x + 1) << LANE_LOG) - 1]);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (gtid.x < THREAD_BLOCKS)
+            b_state[gtid.x] = g_sharedMem[gtid.x] +
+                (LANE < LANE_MASK && gtid.x > LANE_MASK ? WaveReadLaneFirst(g_sharedMem[gtid.x - 1]) : 0);
+    }
+}
 ```
+  
 Explanation
+  
+## Scan
   
 ![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e80f6ece-b2db-48c4-98e6-be20a6b19fb8)
 
 ```HLSL
-foo
+[numthreads(GROUP_SIZE, 1, 1)]
+void DeviceMainScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{
+    uint aggregate = gid.x ? b_state[gid.x - 1] : 0;
+    for (int subPartitionIndex = 0; subPartitionIndex < SUB_PARTITIONS; ++subPartitionIndex)
+        {
+            g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + SUB_PART_START + PARTITION_START];
+            g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+          
+            for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < WAVE_PART_END; i += LANE_COUNT)
+            {
+                g_sharedMem[i] = b_prefixSum[i + SUB_PART_START + PARTITION_START];
+                g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            if (gtid.x < WAVES_PER_GROUP)
+            g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]) + aggregate;
+            GroupMemoryBarrierWithGroupSync();
+        
+            const uint prev = WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : aggregate;
+            for (int i = LANE + WAVE_PART_START; i < WAVE_PART_END; i += LANE_COUNT)
+              b_prefixSum[i + SUB_PART_START + PARTITION_START] = g_sharedMem[i] + (i < WAVE_PART_END - 1 ? prev : 0);
+        
+            aggregate = WaveReadLaneFirst(g_sharedMem[SUB_PARTITION_SIZE - 1]);
+            GroupMemoryBarrierWithGroupSync();
+        }
+}
 ```
   
 </details>
