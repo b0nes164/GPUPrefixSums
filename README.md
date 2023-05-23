@@ -544,4 +544,89 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 </details>
   
 # Device-Level Scan Pattern
+  
+<details>
+
+<summary>
+
+### Device-Level Scan Pattern
+
+</summary>
+  
+![Device 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a95e4647-440b-42d9-ae3e-b7a34247141d)
+
+```HLSL
+  foo
+```
+  
+Explanation goes here...
+  
+![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/0641660d-db0d-48ad-8ecf-3d6312825ffd)
+
+```HLSL
+foo
+```
+Explanation
+  
+![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e80f6ece-b2db-48c4-98e6-be20a6b19fb8)
+
+```HLSL
+foo
+```
+  
+</details>
+  
 # Chained Scan With Decoupled Lookback
+  
+<details>
+
+<summary>
+
+### Chained Scan With Decoupled Lookback
+
+</summary>
+
+## Acquiring Partition Index
+  
+![Chained 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/02aa0608-247b-4b31-81c0-5fc7c3a696a9)
+  
+```HLSL
+
+```
+  
+Explanation goes here...
+  
+## Reduce
+  
+![Chained 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/68788f9b-01cb-4796-ad9b-e0fb515f67ec)
+
+Explanation goes here...
+  
+```HLSL
+
+```
+ 
+## LookBack
+![Aggregates](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6836fa80-e324-413e-a882-0c8b9f6e4db0)
+  
+Explanation goes here...
+
+
+![Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/bd935510-c851-459b-9c66-58963696b4fd)
+
+  
+Explanation goes here...
+  
+## Propagation
+  
+![Propagation](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/c495cdc8-7dfd-461a-87ff-23bff2158e4b)
+  
+Explanation goes here...
+  
+```HLSL
+
+```
+
+</details>
+
+# Testing Methodology
