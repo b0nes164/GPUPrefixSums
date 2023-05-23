@@ -500,6 +500,14 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 Explanation goes here...
 
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
+<details>
+
+<summary>
+
+### Boilerplate Preprocessor Macros
+
+</summary>
+
 ```HLSL
 #define PARTITION_SIZE          32  //The number of elements in a partition
 #define GROUP_SIZE              16  //The number of threads in a threadblock
@@ -517,7 +525,11 @@ Explanation goes here...
 #define PARTITION_START     (partitionIndex << PART_LOG)
 #define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
 #define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
+```
 
+</details>
+  
+```HLSL
 extern int e_size;                                //The size of the buffer, this is set by host CPU code
 RWBuffer<uint> b_prefixSum;                       //The buffer to be prefix_summed
 groupshared uint g_sharedMem[PARTITION_SIZE];     //The array of shared memory we use for intermediate values
@@ -565,8 +577,16 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 </summary>
 
 ## Reduce
-  
+
 ![Device 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a95e4647-440b-42d9-ae3e-b7a34247141d)
+
+<details>
+
+<summary>
+
+### Boilerplate Preprocessor Macros
+
+</summary>
 
 ```HLSL
 #define SUB_PARTITION_SIZE      32  //The size of the threadblock's subpartition.
@@ -591,7 +611,11 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 #define PARTITION_START     (gid.x * PARTITION_SIZE)
 #define SUB_PART_START      (subPartitionIndex << SUB_PART_LOG)
 #define SUB_PARTITIONS      (PARTITION_SIZE >> SUB_PART_LOG)
+```
 
+</details>
+  
+```HLSL
 extern int e_size;                                    //The size of the buffer, this is set by host CPU code
 RWBuffer<uint> b_prefixSum;                           //The buffer to be prefix_summed
 globallycoherent RWBuffer<uint> b_state;              //The buffer used for threadblock aggregates.
@@ -699,7 +723,15 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 ## Acquiring Partition Index
   
 ![Chained 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/02aa0608-247b-4b31-81c0-5fc7c3a696a9)
-  
+
+<details>
+
+<summary>
+
+### Boilerplate Preprocessor Macros
+
+</summary>
+
 ```HLSL
 #define PARTITION_SIZE          32  //The size of the threadblock's subpartition.
 #define GROUP_SIZE              16  //The number of threads in a threadblock
@@ -725,7 +757,11 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 #define WAVE_PART_START     (WAVE_INDEX << WAVE_PART_LOG)
 #define WAVE_PART_END       (WAVE_INDEX + 1 << WAVE_PART_LOG)
 #define PARTITIONS          (e_size >> PART_LOG)
+```
+
+</details>
   
+```HLSL
 extern int e_size;                              //The size of the buffer, this is set by host CPU code
 RWBuffer<uint> b_prefixSum;                     //The buffer to be prefix_summed
 globallycoherent RWBuffer<uint> b_state;        //The buffer used for threadblock aggregates.
