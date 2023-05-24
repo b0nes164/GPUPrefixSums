@@ -764,7 +764,7 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 
 ## Acquiring Partition Index
   
-![Chained 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/02aa0608-247b-4b31-81c0-5fc7c3a696a9)
+![Chained 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f8bda243-7d52-40bb-af52-668ef0c49404)
 
 <details>
 
@@ -777,7 +777,7 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 ```HLSL
 #define PARTITION_SIZE          32  //The size of the threadblock's subpartition.
 #define GROUP_SIZE              16  //The number of threads in a threadblock
-#define THREAD_BLOCKS           8   //The number of threadblocks dispatched
+#define THREAD_BLOCKS           4   //The number of threadblocks dispatched
 #defien PART_LOG                5   //log2(PARTITION_SIZE)
 
 #define LANE_COUNT              4   //The number of threads in a warp
@@ -863,10 +863,10 @@ Explanation goes here...
           g_breaker = true;
       }
 ```
+ 
 Explanation goes here...
 
-
-![Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/bd935510-c851-459b-9c66-58963696b4fd)
+![Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/207b0f97-22fa-4bc6-94dd-d286ff33d544)
 
 ```HLSL
       uint aggregate = 0;
@@ -912,7 +912,7 @@ Explanation goes here...
   
 ## Propagation
   
-![Propagation](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/c495cdc8-7dfd-461a-87ff-23bff2158e4b)
+![propagation](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/bce170cd-b105-42f9-a926-f582da88e571)
   
 ```HLSL
       const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
