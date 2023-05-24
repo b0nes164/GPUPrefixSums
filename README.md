@@ -682,7 +682,7 @@ void DeviceSimpleReduce(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
   
 Explanation goes here...
 
-![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6c450f11-e2b6-498f-8343-1d09d3b31883)
+![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/beefc3d8-a474-429c-8cf9-c101612e607f)
 
 ```HLSL
     if (gtid.x == 0)
