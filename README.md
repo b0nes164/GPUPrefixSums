@@ -620,7 +620,7 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 
 ## Reduce
 
-![Device 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a95e4647-440b-42d9-ae3e-b7a34247141d)
+![Device 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f2be3fc7-33b5-427a-bbf8-7bfca31d9d55)
 
 <details>
 
@@ -633,9 +633,9 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
 ```HLSL
 #define SUB_PARTITION_SIZE      32  //The size of the threadblock's subpartition.
 #define GROUP_SIZE              16  //The number of threads in a threadblock
-#define THREAD_BLOCKS           8   //The number of threadblocks dispatched
+#define THREAD_BLOCKS           4   //The number of threadblocks dispatched
 #define SUB_PART_LOG            5   //log2(SUB_PARTITION_SIZE)
-#define TBLOCK_LOG              3   //log2(THREAD_BLOCKS)
+#define TBLOCK_LOG              2   //log2(THREAD_BLOCKS)
 
 #define LANE_COUNT              4   //The number of threads in a warp
 #define LANE_MASK               3   //A bit-mask used to determine a thread's lane
@@ -681,8 +681,8 @@ void DeviceSimpleReduce(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 ```
   
 Explanation goes here...
-  
-![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/0641660d-db0d-48ad-8ecf-3d6312825ffd)
+
+![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6c450f11-e2b6-498f-8343-1d09d3b31883)
 
 ```HLSL
     if (gtid.x == 0)
@@ -717,7 +717,7 @@ Explanation
   
 ## Scan
   
-![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e80f6ece-b2db-48c4-98e6-be20a6b19fb8)
+![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/65123503-4fdb-4efe-8f64-062f4b4ab639)
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
