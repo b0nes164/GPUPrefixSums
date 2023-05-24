@@ -125,10 +125,20 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
 # Prefix Sum Survey
+![Prefix](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a2cfdec0-53ed-4048-bc5e-8efda30f7cf4)
 
-A prefix sum blah blah blah. Exclusive sum blah blah. Inclusive sum blah blah.
+**Note: The author would like to apologize in advance for interchanging the terms prefix-sum and scan, warp and wave, and threadblocks and threadgroups. These mean the same thing.** 
+
+A prefix sum, also called a scan, is a running total of a sequence of numbers at the n-th element. If the prefix sum is *inclusive* the n-th element is included in that total, if it is *exclusive,* the n-th element is not included. The prefix sum is one of the most important alogrithmic primitives in parallel computing, underpinning everything from [sorting](https://arxiv.org/ftp/arxiv/papers/2206/2206.01784.pdf), to [compression](https://arxiv.org/abs/1311.2540), to [graph traversal](https://research.nvidia.com/sites/default/files/pubs/2012-02_Scalable-GPU-Graph/ppo213s-merrill.pdf). 
+
+In this survey, we will build from simple scans then work our way up from the warp to the device level, eventually ending with the current state-of-the art algorithm, Merill and Garland's **[Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back)**. 
 
 # Basic Scans
+
+We begin with what I call "basic scans" or scans which are parallelized, but agnostic of GPU-specific implementation features. Nevertheless, these scans are important because they form the basis for the later GPU scans. For simplicity, in this section, we will always assume that the number of threads exceeds the size of the buffer to be summed. The size of the scan will always be represented by the variable `e_size`, and the buffer on which we are performing the scan will always be named `prefixSumBuffer`.
+
+As you go through the examples you will notice the functions `DeviceMemoryBarrierWithGroupSync()`, `AllMemoryBarrierWithGroupSync()`, or `GroupMemoryBarrierWithGroupSync()`. These are intrinsic [barrier functions](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/allmemorybarrierwithgroupsync) provided by HLSL that allow us to control the flow of execution of threads within the same threadblock. A common point of confusion is that the `Device` or `All` included in the function names refers to the level of synchronization across the GPU: that `All` must synchronize *all* threads across *all* blocks; that `Device` must synchronize all threads across the `device` (which the astute reader may realize is redundant). **This is not true.** These functions operate only on the threadblock level: **they only synchronize threads within the same threadblock.** What these functions actually specify is the level of synchronization on **memory accesses**, synchronizing device memory read/writes, groupshared memory read/writes os both (All).
+
 <details open>
 <summary>
 
@@ -339,12 +349,16 @@ code + image
 
 # Warp-Synchronized Scans
   
+When a kernel is dispatched, an SM executes multiple, independent copies of the program called threads in parallel groups of 32 (varies by hardware) called warps. GPU’s follow a hybridization of the single instruction, multiple data (SIMD) and single program, multiple thread (SPMD) models in that the SM will attempt to execute all the threads within the same warp in lockstep (SIMD), but will allow the threads to diverge and take different instruction paths if necessary (SPMD). However, divergence is generally undesirable because the SM cannot run both branches in parallel, but instead disables the threads of the opposing branch in order to run the threads of the current branch in lockstep, effectively running the branches serially.
+
+What is important for us is that threads within the same warp are inherently synchronized. This means that we do not have to place as many barriers to guaruntee the correct execution of our program. More importantly, threads within the same warp are able to effeciently communicate with each other   using hardware intrinsic functions. These functions allow us to effeciently broadcast one value to all other threads, `WaveReadLaneFirst()`, and can even perform a warp wide exclusive prefix sum `WavePrefixSum()`. To incorporate these techniques into our algorithm, we change the radix of the network from base 2 to match the size of the warp, in our case 32.
+  
 <details>
 
 <summary>
 
 ### Warp-Sized-Radix Brent-Kung
-
+  
 </summary>
 
 ![RadixBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d246240a-c088-4a74-a4c9-3cc2de12d1c9)
@@ -529,6 +543,19 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 
 # Block-Level Scan Pattern
 
+Up until this point, all the scans we have looked at are all technically block-level scans: they all operate on a single threadblock. However, I have not named them as such because they are still missing one last critical component of GPU programming: shared memory. On the GPU, memory is divided into shared memory/L1 cache, L2 cache, and device memory. Unlike CPU’s which hide their memory latency through relatively large caches and branch prediction, GPU's employ massive amounts of memory bandwith to saturate SM's with data. However, as is shown in the following table, this bandwidth has the drawback of very costly memory accesses, even when the reads/writes are cached in L2.
+
+| | Arithmetic Instruction | Register/L1 | Shared Memory | L2 Device Memory | Device Memory|
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
+| Cost in Cycles  | 10-20  | 1-3 | 1-3 | 50-100 | 400 - 800 |
+  
+Instead, GPU's hide memory latency in two ways:
+
+Firstly *occupancy*. Each SM can host multiple active warps simultaneously, allowing some warps to perform computation while others are reading/writing data back to global memory. Under ideal circumstances the memory bandwith of the GPU is fully saturated, and the latency is hidden by the computational work of the warps. 
+
+Secondly, by storing computational intermediates in shared memory/L1/registers. The only drawback to this approach is that the typical modern Nvidia GPU has only 96kb of shared memory/L1/registers, which means that algorithms must be designed with this constraint in mind.
+ 
+  
 <details>
 
 <summary>
