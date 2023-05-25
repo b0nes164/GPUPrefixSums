@@ -577,12 +577,14 @@ Warp-Synchronized-Scans have inherently coalesced reads and writes, so no modifi
 
 </summary>
 
+## Initialization and First Partition
 ![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
 
 We begin our scan by partitioning the buffer into tiles of size equal to the maximum shared memory size, which in our example is 32. Although in our diagram I show the buffer being partitioned into distinct tiles, in practice all this means is determing the number of partitions required to process the entire buffer, and determing the beginning and ending index of each partition.
 
 We begin our first partition, loading from device memory into shared memory. We have a "device memory index space" and a "shared memory index space". We perform our prefix sum, then pass our results back into device memory, eliding storage of complete results in shared memory by passing the results directly in device memory. Once this is complete, all threads store the aggregate sum of that partition in a register, then proceed to the next partition tile. 
 
+## Second Partition and Onwards
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
 <details>
 
