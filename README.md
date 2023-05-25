@@ -127,17 +127,18 @@ Every scan dispatcher inherits a testing suite that can be controlled in the ins
 # Prefix Sum Survey
 ![Prefix](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a2cfdec0-53ed-4048-bc5e-8efda30f7cf4)
 
-**Note: The author would like to apologize in advance for interchanging the terms prefix-sum and scan, warp and wave, and threadblocks and threadgroups. These mean the same thing.** 
-
 A prefix sum, also called a scan, is a running total of a sequence of numbers at the n-th element. If the prefix sum is *inclusive* the n-th element is included in that total, if it is *exclusive,* the n-th element is not included. The prefix sum is one of the most important alogrithmic primitives in parallel computing, underpinning everything from [sorting](https://arxiv.org/ftp/arxiv/papers/2206/2206.01784.pdf), to [compression](https://arxiv.org/abs/1311.2540), to [graph traversal](https://research.nvidia.com/sites/default/files/pubs/2012-02_Scalable-GPU-Graph/ppo213s-merrill.pdf). 
 
 In this survey, we will build from simple scans then work our way up from the warp to the device level, eventually ending with the current state-of-the art algorithm, Merill and Garland's **[Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back)**. 
 
+**Note: The author would like to apologize in advance for interchanging the terms prefix-sum and scan, warp and wave, and threadblocks and threadgroups. These mean the same thing.** 
 # Basic Scans
 
-We begin with what I call "basic scans" or scans which are parallelized, but agnostic of GPU-specific implementation features. Nevertheless, these scans are important because they form the basis for the later GPU scans. For simplicity, in this section, we will always assume that the number of threads exceeds the size of the buffer to be summed. The size of the scan will always be represented by the variable `e_size`, and the buffer on which we are performing the scan will always be named `prefixSumBuffer`.
+We begin with "basic scans," scans which are parallelized, but agnostic of GPU-specific implementation features. While these exact scans will not appear in our final implementation, the underlying patterns still form the basis of the more advanced scans.
 
-As you go through the examples you will notice the functions `DeviceMemoryBarrierWithGroupSync()`, `AllMemoryBarrierWithGroupSync()`, or `GroupMemoryBarrierWithGroupSync()`. These are intrinsic [barrier functions](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/allmemorybarrierwithgroupsync) provided by HLSL that allow us to control the flow of execution of threads within the same threadblock. A common point of confusion is that the `Device` or `All` included in the function names refers to the level of synchronization across the GPU: that `All` must synchronize *all* threads across *all* blocks; that `Device` must synchronize all threads across the `device` (which the astute reader may realize is redundant). **This is not true.** These functions operate only on the threadblock level: **they only synchronize threads within the same threadblock.** What these functions actually specify is the level of synchronization on **memory accesses**, synchronizing device memory read/writes, groupshared memory read/writes os both (All).
+In this section, we introduce the diagram pattern that is throughout the rest of the survey. Every diagram consists of an input buffer with all elements initialized to 1, with arrows representing direct sums made by each thread. We initialize the buffer this way because it allows us to easily verify the correctness of the sum: the correct inclusive sum of the n-th element is always n + 1. Every diagram will specify the number of threadblocks, and the number of threads per threadblock (block size/group size). The size of the scan will always be represented by the variable `e_size`, and the buffer on which we are performing the scan will always be named `prefixSumBuffer`.
+
+As you go through the code examples you will notice the functions `DeviceMemoryBarrierWithGroupSync()`, `AllMemoryBarrierWithGroupSync()`, or `GroupMemoryBarrierWithGroupSync()`. These are intrinsic [barrier functions](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/allmemorybarrierwithgroupsync) provided by HLSL that allow us to control the flow of execution of threads within the same threadblock. A common misconception is that the `Device` or `All` included in the function name refers to the level of synchronization across the GPU: that `All` must synchronize *all* threads across *all* blocks; that `Device` must synchronize all threads across the `device`. **This is not true.** These functions operate only on the threadblock level: **they only synchronize threads within the same threadblock.** What these functions actually specify is the level of synchronization on **memory accesses**, synchronizing device memory read/writes, groupshared memory read/writes or both (All).
 
 <details open>
 <summary>
@@ -543,7 +544,7 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 
 # Block-Level Scan Pattern
 
-Up until this point, all the scans we have looked at are all technically block-level scans: they all operate on a single threadblock. However, I have not named them as such because they are still missing one last critical component of GPU programming: shared memory. On the GPU, memory is divided into shared memory/L1 cache, L2 cache, and device memory. Unlike CPU’s which hide their memory latency through relatively large caches and branch prediction, GPU's employ massive amounts of memory bandwith to saturate SM's with data. However, as is shown in the following table, this bandwidth has the drawback of very costly memory accesses, even when the reads/writes are cached in L2.
+Up until this point, all the scans we have looked at are all technically block-level scans: they all operate on a single threadblock. However they are not true "block level" scans because they are still agnostic of the last critical component of GPU optimization: the GPU memory model. On the GPU, memory is divided into shared memory/L1 cache, L2 cache, and device/global memory. Unlike CPU’s which hide their memory latency through relatively large caches and branch prediction, GPU's employ massive amounts of memory bandwith to saturate SM's with data. However, as is shown in the following table, this bandwidth comes at the cost of very high memory latency, even when the reads/writes are cached in L2.
 
 | | Arithmetic Instruction | Register/L1 | Shared Memory | L2 Device Memory | Device Memory|
 | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
@@ -551,10 +552,22 @@ Up until this point, all the scans we have looked at are all technically block-l
   
 Instead, GPU's hide memory latency in two ways:
 
-Firstly *occupancy*. Each SM can host multiple active warps simultaneously, allowing some warps to perform computation while others are reading/writing data back to global memory. Under ideal circumstances the memory bandwith of the GPU is fully saturated, and the latency is hidden by the computational work of the warps. 
+Firstly *occupancy*. Each SM can host multiple active warps simultaneously, typically up to 32 or 64. While there are different policies for scheduling warps, generally speaking what this means is that an SM's switches execution between warps to allow ready warps to perform computation while others are waiting to read/write data back to global memory. Under ideal circumstances the memory bandwith of the GPU is fully saturated, and the latency is hidden by the computational work of the warps. 
 
-Secondly, by storing computational intermediates in shared memory/L1/registers. The only drawback to this approach is that the typical modern Nvidia GPU has only 96kb of shared memory/L1/registers, which means that algorithms must be designed with this constraint in mind.
+Secondly, by using shared memory/registers L1 cache. Shared memory is memory that is visible to all threads within a threadblock, and registers are memory that is visible only to a thread. L1 is any memory leftover after the register allocation is fulfilled. A typical modern Nvidia GPU has 96kb of memory that is divided between shared memory and L1/registers. The specific proportion between the two is called the *carveout*, and typically this is 32kb shared memory, 64 kb L1/registers. By using shared memory or registers to store computational intermediates, we can dramatically increase performance because we are no longer paying that 600 cycle cost for memory access.
+
+Lastly, memory latency aside, we want to maximize the memory bandwidth efficiency of our reads and writes. To do so, we want our reads and writes to be *coalesced*, which means that each warp reads and writes contiguous sections of memory, rather than each thread accessing discontinous memory locations. Furthermore, we use *vectorized* reads and writes: instead of reading only 4 bytes or a single 32-bit variable at a time, we read 16 bytes or 4 32-bit variables a time. For an algorithm like the prefix sum, which is computationally very light, memory access is the limiting factor on the performance of the algorithm, and thus effecient memory access has a dramatic effect on performance.
  
+So what does this mean in practice?
+
+Occupancy:
+We want to make sure that each SM hosts up to its maximum number of warps. To do so we carefully limit the number of registers each thread uses to ensure we do not spillover into device memory, and ensure that memory footprint of all warps can fit on the SM. This also means that we use preprocessor macros to calculate intermediate values to save on valuable register space.
+
+Shared Memory:
+We use a *systolic* approach to our algorithm. Because we always want to be operating on shared memory, we limit the size of our scan to the maximum size of our shared memory. We then partition our buffer into tiles equal to that size, only accessing device memory to load in new partition tiles or read out processed partition tiles. We work our way serially along the partition tiles, passing in the previous aggregate sum as we go.
+
+Memory Bandwidth Effeciency:
+Warp-Synchronized-Scans have inherently coalesced reads and writes, so no modification is necessary here. Vectorization is quite simple to achieve, but for simplicity I have not included it in these examples. Shared memory has a catch however: [*bank conflicts.* ](https://github.com/Kobzol/hardware-effects-gpu/blob/master/bank-conflicts/README.md). Basically shared memory is organized into a number of banks, typically of 4 bytes each, and typically equal to the number of threads in a warp, 32. If multiple threads in the same warp attempt to access indexes within the same bank, 31 and 63 for example, there is a bank conflict and each thread must wait for preceeding accesses to complete. There are different ways of combatting this, but we simply use an underlying scan pattern which is naturally conflict free, except for along the spine: a warp-sized-radix raking reduce-scan.
   
 <details>
 
