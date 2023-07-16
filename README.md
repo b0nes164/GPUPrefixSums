@@ -595,8 +595,6 @@ Warp-Synchronized-Scans have inherently coalesced reads and writes, so no modifi
 We begin our first partition, loading from device memory into shared memory. We perform our prefix sum, then pass our results back into device memory, eliding storage of complete results in shared memory by passing the results directly in device memory. Once this is complete, all threads store the aggregate sum of that partition in a register, then proceed to the next partition tile. 
 <br>
 <br>
-<br>
-<br>
 ## Second Partition and Onwards
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
 
@@ -673,7 +671,7 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
   
 Up until this point, all of the scans we have explored operate on a single threadblock. However, a GPU can host dozens of threadblocks, and so to fully utilize our GPU we need an algorithm which can utilize multiple threadblocks instead of just one. However, this is easier said than done. In terms of general device-level implementation issues, there is the issue of inter-threadblock communication. There is no "threadblock shared memory," nor are there (kosher) device-wide fences that we can use to synchronize threadblocks. More specifically to prefix sums, each element is serially dependent on the sum of preceeding elements. On device-level this means that each threadblock is serially dependent on the result of preceeding threadblocks.
 
-To solve this problem, we use the reduce-then-scan technique from the basic scans section. We begin by partitioning the input among the threadblocks. To overcome the serial depedency of the sums, each threadblock computes the reduction of its partiition amd stores the result in intermediate device level buffer. Through the use of atomic bumping, the last threadblock to finish 
+To solve these problems, we use the reduce-then-scan technique from the basic scans section. We begin by partitioning the input among the threadblocks. To overcome the serial depedency of the sums, each threadblock computes the reduction of its partiition amd stores the result in an intermediate device level buffer. We perform a prefix sum across these intermediates and store them. Finally, each threadblock performs a prefix sum across its partition tile, and passes in the correct preceeding sum from the intermediate value buffer. Because only the reduced intermediate value is passed between threadblocks, the device-memory access overhead is neglible. In order to main coherence between the threadblocks, we seperate the reduce phase and the scan phase into individual kernels.
   
 <details>
 
@@ -745,7 +743,8 @@ void DeviceSimpleReduce(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
         g_sharedMem[gtid.x] = WaveActiveSum(g_sharedMem[gtid.x]);
 ```
   
-Explanation goes here...
+Each threadblock/threadgroup, identified by its group id `gid`, calculates the reduction of its partition. To do this, we use the `WaveActiveSum` intrinsic function to sum the elements within a warp. When all warps finish processing the partition, the first thread in each warp places its aggregate sum into shared memory, then the first warp in a threadblock sums the warp aggregates and places the final value into the intermediate device buffer.
+#
 
 ![Device 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/beefc3d8-a474-429c-8cf9-c101612e607f)
 
@@ -778,15 +777,16 @@ Explanation goes here...
 }
 ```
   
-Explanation
-  
+After a threadblock inserts its partition aggregate into the intermediate buffer, it atomically bumps an index value in device memory. By doing this, we can keep track of how many threadblocks have completed their reductions. The last threadblock to complete its reduction is then given the task of performing the prefix sum of the intermediate values. Because the size of the intermediate buffer is so small, we do not need to use the entire GPU to compute it.
+<br>
+<br>
 ## Scan
   
 ![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/65123503-4fdb-4efe-8f64-062f4b4ab639)
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
-void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 {
     uint aggregate = gid.x ? b_state[gid.x - 1] : 0;
     for (int subPartitionIndex = 0; subPartitionIndex < SUB_PARTITIONS; ++subPartitionIndex)
@@ -814,7 +814,10 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
     }
 }
 ```
-  
+
+The scan kernel is an exact copy of the block-level scan except that we pass in the aggregate value from the intermediate buffer and we only process the threadblock's partition rather than the whole input.
+<br>
+<br>
 </details>
   
 # Chained Scan With Decoupled Lookback
