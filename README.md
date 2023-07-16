@@ -555,7 +555,7 @@ void RadixRakingReduce(int3 gtid : SV_GroupThreadID)
 
 
 ## Hiding GPU Memory Latency
-Unlike CPU’s which hide their memory latency through relatively large caches and branch prediction, GPU's employ massive amounts of memory bandwith to saturate SM's with data. Instead memory latency is hiddent through a combination of *occupancy* and careful use of registers and shared memory.
+Unlike CPU’s which hide their memory latency through relatively large caches and branch prediction, GPU's employ massive amounts of memory bandwith to saturate SM's with data, and hide their memory latency through a combination of *occupancy* and careful use of registers and shared memory.
 
 ### Occupancy:
 Each SM can host multiple active warps simultaneously, typically up to 32 or 64, and the number of warps hosted is known as the *occupancy* rate. However a typical SM has only 2 - 4 warp scheduling units, meaning that only 2 -4 of those hosted warps are being executed at any given time. This allows the SM execute "ready" warps while others are waiting to read/write data back to global memory. With sufficient arithmetic pressure and/or occupancy, the entire read/write time can be hidden by the work of other warps. Under ideal circumstances, memory latency is fully hidden by the computational work of the warps, or the memory bandwidth is fully saturated.
@@ -596,11 +596,13 @@ We begin our first partition, loading from device memory into shared memory. We 
 <br>
 <br>
 <br>
+<br>
 ## Second Partition and Onwards
 ![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
-<details>
+
 
 The second partition proceeds almost identically to the first, except that along the downsweep we pass in the aggregate from the previous partition and add the current aggregate to our register. This pattern repeats until all partition tiles are complete.
+<details>
   
 <summary>
 
@@ -669,12 +671,9 @@ void BlockWarpRakingReduce(int3 gtid : SV_GroupThreadID)
   
 # Device-Level Scan Pattern
   
-As alluded to in the Basic Scans section, there is no (kosher) way to synchronize the executation of threadblocks. This an issue because:
+Up until this point, all of the scans we have explored operate on a single threadblock. However, a GPU can host dozens of threadblocks, and so to fully utilize our GPU we need an algorithm which can utilize multiple threadblocks instead of just one. However, this is easier said than done. In terms of general device-level implementation issues, there is the issue of inter-threadblock communication. There is no "threadblock shared memory," nor are there (kosher) device-wide fences that we can use to synchronize threadblocks. More specifically to prefix sums, each element is serially dependent on the sum of preceeding elements. On device-level this means that each threadblock is serially dependent on the result of preceeding threadblocks.
 
-Chained Scan 2n
-Reduce Scan 3n
-
-groupshared memory lasts only as long as the threadblock.
+To solve this problem, we use the reduce-then-scan technique from the basic scans section. We begin by partitioning the input among the threadblocks. To overcome the serial depedency of the sums, each threadblock computes the reduction of its partiition amd stores the result in intermediate device level buffer. Through the use of atomic bumping, the last threadblock to finish 
   
 <details>
 
