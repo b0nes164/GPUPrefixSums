@@ -782,7 +782,7 @@ After a threadblock inserts its partition aggregate into the intermediate buffer
 <br>
 ## Scan
   
-![Device 3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/65123503-4fdb-4efe-8f64-062f4b4ab639)
+![Device3](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/b8c82585-1773-401b-8049-c096682ce036)
 
 ```HLSL
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -815,13 +815,23 @@ void DeviceSimpleScan(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 }
 ```
 
-The scan kernel is an exact copy of the block-level scan except that we pass in the aggregate value from the intermediate buffer and we only process the threadblock's partition rather than the whole input.
-<br>
+The diagram above shows the state of the third threadblock partway through its partition. The scan kernel is an exact copy of the block-level scan except that we pass in the aggregate value from the intermediate buffer and we only process the threadblock's partition rather than the whole input. 
 <br>
 </details>
   
 # Chained Scan With Decoupled Lookback
-  
+
+Finally we reach *Chained Scan with Decoupled LookBack.* (CSDL) To understand why CSDL is an improvement over reduce-then-scan (RS) let us reexamine the RS algorithm paying close attention the device memory accesses. Looking at RS we observe that we must read *n* elements during the reduce phase, then read and write *n* elements again during scan, for a total of *3n* total device level data movement. CSDL makes the observation that the *n* reads during the reduce phase are wasted, and that with careful ordering of threadblocks, it is possible to propogate aggregate sums *while* we are performing the scan. By doing this, we reduce the overall device-level data movement to *2n*. Because prefix sums are compuationally very light and operate at the limit of the memory bandwidth, reducing the data movement by *n* improves the performance by ~50%. 
+
+The key issue that CSDL solves is the coordination between threadblocks. Instead of dividing the input into equal partitions among the threadblocks, we divide the input into smaller fixed size partition tiles, with the size equal to about the maximum shared memory. Each threadblock is assigned a partition tile. After reading its input into shared memory and computing the aggregate sum, the threadblock posts the value into an intermediate buffer along with a flag value that signals to other threadblocks that the partition tile's aggregate has been posted. Then it *looks back* through the intermediate buffer, summing the preceeding aggregates to determine the correct preceeding sum. Once the preceeding sum has been found, the value is added to the intermediate buffer, and the flag is updated to signal that the inclusive sum is ready and that other *look backs* can stop upon reaching this value. During this time, the partition tile inputs are still resident in shared memory, and once the *look back phase* is complete, the preceeding sum can be used to output the correct prefix sum value.
+
+## The Deadlock Issue
+We make the observation that there are $\left\lceil \frac{InputSize}{PartitionTileSize} \right\rceil$ partition tiles. Let us assume there are more partition tiles than threadblocks, and that there are more threadblocks than SM's. (This is almost always true.)  When a kernel is dispatched, the order in which threadblocks are executed is not guarunteed, and a threadblock must run to completion once it begins execution. If we use the traditional technique of assigning partition tiles by `blockID`/`groupID`, there is a chance that a threadblock will execute with preceeding partition tile aggregates that are not yet computed. Because the *lookback phase* will wait indefinitely until all preceeding aggregate sums are posted, this potentially creates a deadlock which will crash the kernel. CSDL solves this by using the same atomic bumping technique as we used during the reduction in RS. Upon execution, each threadblock atomically bumps the index value to acquire the index of the next uncompleted partition tile. By doing this, we guarantee that all preceeding tiles have either been processed or began being processed, ensuring that a deadlock cannot occur.
+
+
+## Portability Issues
+
+
 <details>
 
 <summary>
