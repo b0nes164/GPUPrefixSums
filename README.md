@@ -32,14 +32,6 @@ Eventually I plan on making a tool that parse my Nvidia targetted shader to outp
 
 <details>
   
-  <summary>Chained Scan with Decoupled Lookback is not guaranteed to work on Nvidia cards older than Volta or AMD cards older than ????.</summary>
-
-</br>Decoupled Lookback relies on two concepts to function properly: guaranteed forward progress of threads and fair scheduling of thread groups. This is because we effectively create threadblock level spinlocks during the lookback phase of the algorithm. Without these guaruntees, there is a chance that a threadblock never unlocks or that a threadblock whose depedent aggregate is already available is kept waiting for a suboptimal period of time. Thus, hardware models without these features may not see the same speedup or may fail to work altogether. If you wish to read more about the portability issues, and some of the general challenges of implementing chained decoupled scan, I would highly recommend reading Raph Levien’s [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) detailing his experience with it. To read more on the issue of GPU workgroup progress models I recommend this [paper](https://arxiv.org/abs/2109.06132).
-
-</details>
-
-<details>
-  
   <summary>Currently the maximum aggregate sum supported in Chained Scan with Decoupled Lookback is 2^30.</summary>
 
 </br>In order to maintain coherency of the flag values between threadblocks, we have to bit-pack the threadblock aggregate into into the same value as the status flag. The flag value takes 2 bits, so we are left 30 bits for the aggregate. Although shader model 6.6 does support 64-bit values and atomics, enabling these features in Unity is difficult, and I will not include it until Unity moves the feature out of beta.
@@ -57,6 +49,8 @@ Eventually I plan on making a tool that parse my Nvidia targetted shader to outp
 <details>
   
   <summary>All scans are inclusive.</summary>
+
+  </br>I have exclusive versions of the scans, but I would like to polish them a little more and will release them sometime in the future.
   
 </details>
 
@@ -332,19 +326,6 @@ void RakingReduce(int3 gtid : SV_GroupThreadID)
             prefixSumBuffer[j] += prefixSumBuffer[partStart - 1];
 }
 ```
-
-</details>
-
-
-<details>
-
-<summary>
-
-### TItle
-
-</summary>
-
-code + image
 
 </details>
 
@@ -826,11 +807,7 @@ Finally we reach *Chained Scan with Decoupled LookBack.* (CSDL) To understand wh
 The key issue that CSDL solves is the coordination between threadblocks. Instead of dividing the input into equal partitions among the threadblocks, we divide the input into smaller fixed size partition tiles, with the size equal to about the maximum shared memory. Each threadblock is assigned a partition tile. After reading its input into shared memory and computing the aggregate sum, the threadblock posts the value into an intermediate buffer along with a flag value that signals to other threadblocks that the partition tile's aggregate has been posted. Then it *looks back* through the intermediate buffer, summing the preceeding aggregates to determine the correct preceeding sum. Once the preceeding sum has been found, the value is added to the intermediate buffer, and the flag is updated to signal that the inclusive sum is ready and that other *look backs* can stop upon reaching this value. During this time, the partition tile inputs are still resident in shared memory, and once the *look back phase* is complete, the preceeding sum can be used to output the correct prefix sum value.
 
 ## The Deadlock Issue
-We make the observation that there are $\left\lceil \frac{InputSize}{PartitionTileSize} \right\rceil$ partition tiles. Let us assume there are more partition tiles than threadblocks, and that there are more threadblocks than SM's. (This is almost always true.)  When a kernel is dispatched, the order in which threadblocks are executed is not guarunteed, and a threadblock must run to completion once it begins execution. If we use the traditional technique of assigning partition tiles by `blockID`/`groupID`, there is a chance that a threadblock will execute with preceeding partition tile aggregates that are not yet computed. Because the *lookback phase* will wait indefinitely until all preceeding aggregate sums are posted, this potentially creates a deadlock which will crash the kernel. CSDL solves this by using the same atomic bumping technique as we used during the reduction in RS. Upon execution, each threadblock atomically bumps the index value to acquire the index of the next uncompleted partition tile. By doing this, we guarantee that all preceeding tiles have either been processed or began being processed, ensuring that a deadlock cannot occur.
-
-
-## Portability Issues
-
+Let us assume there are more partition tiles than threadblocks, and that there are more threadblocks than SM's. Given that there are $\left\lceil \frac{InputSize}{PartitionTileSize} \right\rceil$ partition tiles, this is almost always true. When a kernel is dispatched, the order in which threadblocks are executed is not guarunteed, and a threadblock must run to completion once it begins execution ([Occupancy Bound Execution paradigm](https://drops.dagstuhl.de/opus/volltexte/2018/9561/pdf/LIPIcs-CONCUR-2018-23.pdf)). If we use the traditional technique of assigning partition tiles by `blockID`/`groupID`, there is a chance that a threadblock will execute with preceeding partition tile aggregates that are not yet computed. Because the *lookback phase* will wait indefinitely until all preceeding aggregate sums are posted, this potentially creates a deadlock which will crash the kernel. CSDL solves this by using the same atomic bumping technique as we used during the reduction in RS. Upon execution, each threadblock atomically bumps the index value to acquire the index of the next uncompleted partition tile. By doing this, we guarantee that all preceeding tiles have either been processed or began being processed, ensuring that a deadlock cannot occur. I believe this solves the forward progress portability issue discussed in Levien's [blog](https://raphlinus.github.io/gpu/2020/04/30/prefix-sum.html) post.
 
 <details>
 
@@ -867,7 +844,7 @@ We make the observation that there are $\left\lceil \frac{InputSize}{PartitionTi
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
-#define FLAG_PREFIX     2
+#define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
 #define LANE                (gtid.x & LANE_MASK)
@@ -902,8 +879,9 @@ void CD_Simple(int3 gtid : SV_GroupThreadID)
         GroupMemoryBarrierWithGroupSync();
 ```
   
-Explanation goes here...
-  
+The algorithm begins by atomically incrementing the index value in the `b_state` buffer. Using `InterlockedAdd`, the pre-increment value is read back into shared memory. We then broadcast the value from shared memory into thread registers. As we have mentioned in the overview, this prevents deadlocking issues.
+<br>
+<br>
 ## Reduce
   
 ![Chained 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/68788f9b-01cb-4796-ad9b-e0fb515f67ec)
@@ -925,9 +903,9 @@ Explanation goes here...
       GroupMemoryBarrierWithGroupSync();
 ```
   
-Explanation goes here...
-  
- 
+Once index of the partition tile has been acquired, we load its elements into shared memory. Because the elements will remain resident in shared memory we perform the initial inclusive prefix scans now, producing the partition tile aggregate value in the process.
+<br>
+<br>
 ## LookBack
 ![Aggregates](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6836fa80-e324-413e-a882-0c8b9f6e4db0)
 
@@ -935,14 +913,16 @@ Explanation goes here...
       if (gtid.x == 0)
       {
           if (partitionIndex == 0)
-              InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[PARTITION_MASK] << 2));
+              InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_MASK] << 2));
           else
               InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_MASK] << 2));
           g_breaker = true;
       }
 ```
  
-Explanation goes here...
+We now atomically post the partition tile aggregate into device memory (**labelled block aggregate in the above figure**), and update the flag value to `1` indicating that the aggregate of that partition tile is available. If the partition tile index is `0`, that is to say if it is the first tile, we 
+update the flag value to `2`, indicating that the inclusive sum of all preceeding tiles is included in this value. This is useful because it signals to other threadblocks during the *look back* that they can stop upon reaching this value, because again, the sum of all preceeding tiles is included in this value. To elide use of barriers to maintain coherency between the aggregate value and the flag value, we bit pack them into the same value, allowing us to maintain coherency with atomics only. However, as our flag value takes up 2 bits, this limits the total aggregate sum that can be calculated to $2^{30}$.
+#
 
 ![Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/207b0f97-22fa-4bc6-94dd-d286ff33d544)
 
@@ -958,14 +938,14 @@ Explanation goes here...
                   for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                   {
                       uint flagPayload = b_state[i];
-                      const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                      const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                       const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                      if (prefixIndex < gapIndex)
+                      if (inclusiveIndex < gapIndex)
                       {
-                          aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                          aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                           if (gtid.x == 0)
                           {
-                              InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + g_sharedMem[PARTITION_MASK] << 2), flagPayload);
+                              InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
                               g_breaker = false;
                               g_aggregate = aggregate;
                           }
@@ -986,7 +966,9 @@ Explanation goes here...
       }
 ```
   
-Explanation goes here...
+Once the aggregate has been posted, we enter the *look back* phase. First, we restrict the lookback to the first warp of the threadblock, as the full paralellism is not required and the overhead of coordinating the full threadblock is more expensive than it is worth. Each thread of the warp reads a the combined flag and aggregate value of the partition tiles directly preceeding its own tile which we call `flagPayload`. We then use `flagPayload` along with the warp-wide minimum function to calculate two values `inclusiveIndex` and `gapIndex`. These respectively indicate whether an inclusive aggregate has been found in this run of values, and whether a partition tile that has posted no sum (a "gap") has been found. If an `inclusiveIndex` has been found which does not have a `gapIndex` blocking it, the sum of the preceeding tiles has been found and the value is atomically posted back into device memory. If no `inclusiveIndex` has been found, or if it is blocked by a `gapIndex`, we sum all the aggregates up to the `gapIndex` and shift our lookback window up to the `gapIndex` then `break` and repeat the process.    
+
+The first partition tile skips this phase, because it has no preceeding sums.
   
 ## Propagation
   
@@ -999,8 +981,10 @@ Explanation goes here...
         
   } while (partitionIndex + THREAD_BLOCKS < PARTITIONS);
 ```
-Explanation goes here...
+Once the preceeding tile aggregate has been found, the value is broadcast to the other warps in the group, and the prefix sum is completed.
                                                         
 </details>
 
 # Testing Methodology
+Performance testing in the Unity HLSL environment is challenging because, to the best of my knowledge, there is no way to directly time the execution of kernels in situ on GPU's. Neither is a way to time 
+# Interesting Reading
