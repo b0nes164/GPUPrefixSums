@@ -986,5 +986,34 @@ Once the preceeding tile aggregate has been found, the value is broadcast to the
 </details>
 
 # Testing Methodology
-Performance testing in the Unity HLSL environment is challenging because, to the best of my knowledge, there is no way to directly time the execution of kernels in situ on GPU's. Neither is a way to time 
-# Interesting Reading
+Performance testing in the Unity HLSL environment is challenging because, to the best of my knowledge, there is no way to directly time the execution of kernels in situ on GPU's. Neither is there a way to directly time the execution of a kernel in host CPU code. Instead we make do by making an [`AsyncGPUReadback.Request`](https://docs.unity3d.com/ScriptReference/Rendering.AsyncGPUReadback.html), which essentially waits until the GPU signals that is finished working on a buffer, then reads the entire buffer back from GPU memory to CPU memory. Although this does accurately time the execution of the kernel, the resulting time it produces also includes the time taken to readback the buffer. Given that, operating at the theoretical maximum speed, it takes it should take a 2080 Super just ~0.004 seconds to process a $2^{28}$ input, whereas experimental testing has shown that the time taken to readback the buffer is about ~.678 seconds, this is quite an issue. For more on the readback times I highly recommend MJP's blog [post](https://therealmjp.github.io/posts/gpu-memory-pool/). 
+
+To overcome this, we make an alternate version of each scan, that we can loop a fixed number of times. By holding the size of the input and thus the readback time fixed, we can determine the execution time of the algorithm indepdent of the readback. All of our testing was performed in the Unity editor, with the camera disabled. We collected samples in batches of 500 at each number of loop iterations, discarding the first sample from each batch in order to prep the TLB. With the exception of the naive prefix sum, all tests were peformed at: 1, 5, 10, 15, and 20 loops. Unity has a somewhat aggressive halting policy when it comes to shaders, and appears to crash when the execution of a shader exceeds about ~2.5 seconds, which precluded testing of a larger number of loops with the naive prefix sum. The results for each of the scans in the histograms depicted at the top of the page is as follows:
+
+![Naive Implementation of Blelloch's Algorithm](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9a6553d3-afd5-4ef6-b123-c820894378f4)
+
+![Single Threadblock Warp Sized Radix Raking Reduce Scan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/473fafce-0b7b-443f-b4d4-999160e31095)
+
+![Device Level Vectorized Reduce then Scan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/83ded377-97c3-4693-938d-f150a82d0bb8)
+
+![Vectorized Chained Scan With Decoupled Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f71853e7-5886-468d-ae61-792f313af5bd)
+
+# Interesting Reading and Bibliography
+
+Duane Merrill and Michael Garland. “Single-pass Parallel Prefix Scan with De-coupled Lookback”. In: 2016. 
+url: https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back
+
+Vasily Volkov. “Understanding Latency Hiding on GPUs”. PhD thesis. EECS Department, University of California, Berkeley, Aug. 2016. 
+url: http://www2.eecs.berkeley.edu/Pubs/TechRpts/2016/EECS-2016-143.html
+
+Zhe Jia et al. Dissecting the NVidia Turing T4 GPU via Microbenchmarking. 2019. arXiv: 1903.07486.
+url: https://arxiv.org/abs/1903.07486
+
+Ralph Linus. Prefix sum on portable compute shaders. Nov. 2021. 
+url: https://raphlinus.github.io/.
+
+Tyler Sorensen, Hugues Evrard, and Alastair F. Donaldson. “GPU Schedulers: How Fair Is Fair Enoughl”. In: 29th International Conference on Concurrency Theory (CONCUR 2018). Ed. by Sven Schewe and Lijun Zhang. Vol. 118. Leibniz International Proceedings in Informatics (LIPIcs). Dagstuhl, Germany: Schloss Dagstuhl–Leibniz-Zentrum fuer Informatik, 2018, 23:1–23:17. isbn: 978-3-95977-087-3. doi: 10.4230/LIPIcs.CONCUR.2018.23. 
+url: http://drops.dagstuhl.de/opus/volltexte/2018/9561.
+
+Matt Pettineo. GPU Memory Pools in D3D12. Jul. 2022.
+url: https://therealmjp.github.io/posts/gpu-memory-pool/
