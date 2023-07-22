@@ -1,0 +1,321 @@
+/******************************************************************************************************************
+ * Chained Decoupled Scan D
+ *
+ * Variant: This is a direct translation of the block-level raking reduce scan. 
+ *          
+ * Notes:   **Unrolls and preprocessor macros must be manually changed for AMD**
+ *
+ * Author:  Thomas Smith 5/9/2023
+ *
+ * License: The Unlicense
+ *          This is free and unencumbered software released into the public domain.
+ *          For more information, please refer to the repository license or <https://unlicense.org>
+ *   
+ * Based off of Research by:
+ *          Duane Merrill, Nvidia Corporation
+ *          Michael Garland, Nvidia Corporation
+ *          https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back
+ *
+ * This implementation does not constitute ANY form of endorsement or promotion
+ * from its authors or Nvidia Corporation. In no event shall Nvidia Corporation
+ * be held liable for ANY damages arising in any way out of the use of this 
+ * software. The implementation author is not affiliated in ANY way with Nvidia
+ * Corporation.
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel CD_D
+#pragma kernel CD_D_Timing
+
+#define THREAD_BLOCKS       1024
+#define PARTITION_SIZE      256
+#define PARTITION_MASK      255
+#define PART_LOG            8
+#define THREAD_PART_SIZE    8
+#define THREAD_PART_LOG     3
+
+#define LANE_COUNT  32  // <--------------------------- For Nvidia; change depending on hardware
+#define LANE_MASK   31
+#define LANE_LOG    5
+
+//#define LANE_COUNT    64 <-----------------------   For AMD 
+//#define LANE_MASK     63
+//#define LANE_LOG      6
+
+extern int e_size;
+extern int e_repeats;
+
+#define FLAG_NOT_READY  0
+#define FLAG_AGGREGATE  1
+#define FLAG_INCLUSIVE  2
+#define FLAG_MASK       3
+
+#define PARTITIONS          ((e_size & PARTITION_MASK) ? \
+                            (e_size >> PART_LOG) + 1 : \
+                            e_size >> PART_LOG )
+#define PARTITION_START     (partitionIndex << PART_LOG)
+#define THREAD_PART_START   (gtid.x << THREAD_PART_LOG)
+#define THREAD_PART_END     ((gtid.x + 1) << THREAD_PART_LOG)
+#define EXACT_PART_SIZE     (e_size - PARTITION_START)
+#define EXACT_THREAD_PART   (THREAD_PART_END > EXACT_PART_SIZE ? \
+                            ((EXACT_PART_SIZE - 1 >> THREAD_PART_LOG) == gtid.x ? EXACT_PART_SIZE : 0) : \
+                            THREAD_PART_END)
+
+//Adjusted partition indexes for timing kernel
+#define T_PART_INDEX        (partitionIndex & 1048575)        //For 2^28 ONLY
+#define T_PART_START        (T_PART_INDEX << PART_LOG)
+#define T_EXACT_PART_SIZE   (e_size - T_PART_START)
+#define T_EXACT_THREAD_PART (THREAD_PART_END > T_EXACT_PART_SIZE ? \
+                            ((T_EXACT_PART_SIZE - 1 >> THREAD_PART_LOG) == gtid.x ? T_EXACT_PART_SIZE : 0) : \
+                            THREAD_PART_END)
+
+globallycoherent RWBuffer<uint> b_state;
+RWBuffer<uint> b_prefixSum;
+groupshared uint g_sharedMem[PARTITION_SIZE];
+
+[numthreads(1024, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += 1024 * THREAD_BLOCKS)
+        b_prefixSum[i] = 1;
+}
+
+[numthreads(LANE_COUNT, 1, 1)]
+void CD_D(int3 gtid : SV_GroupThreadID)
+{   
+    int partitionIndex;
+    do
+    {
+        if (gtid.x == 0)
+            InterlockedAdd(b_state[PARTITIONS], 1, g_sharedMem[0]);
+        partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+
+        if (partitionIndex == PARTITIONS - 1)
+        {
+            const int threadPartEnd = EXACT_THREAD_PART;
+            if (threadPartEnd)
+            {
+                g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+                
+                for (int j = THREAD_PART_START + 1; j < threadPartEnd; ++j)
+                    g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+                
+                g_sharedMem[threadPartEnd - 1] += WavePrefixSum(g_sharedMem[threadPartEnd - 1]);
+            }
+            
+            uint aggregate = 0;
+            int indexOffset = 0;
+            bool breaker = true;
+            do
+            {
+                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                {
+                    uint flagPayload = b_state[i];
+                    const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                    const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    if (inclusiveIndex < gapIndex)
+                    {
+                        breaker = false;
+                        aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                        break;
+                    }
+                    else
+                    {
+                        aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                        indexOffset += gapIndex;
+                        break;
+                    }
+                }
+            } while (WaveReadLaneFirst(breaker));
+        
+            if (threadPartEnd)
+            {
+                aggregate = WaveReadLaneFirst(aggregate);
+                b_prefixSum[PARTITION_START + threadPartEnd - 1] = g_sharedMem[threadPartEnd - 1] + aggregate;
+                aggregate += gtid.x ? g_sharedMem[THREAD_PART_START - 1] : 0;
+                for (int j = THREAD_PART_START; j < threadPartEnd - 1; ++j)
+                    b_prefixSum[PARTITION_START + j] = g_sharedMem[j] + aggregate;
+            }
+        }
+        else
+        {
+            //Per thread serial prefix sum
+            g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + PARTITION_START];
+            
+            [unroll(7)] //thread partition size - 1
+            for (int j = THREAD_PART_START + 1; j < THREAD_PART_END; ++j)
+                g_sharedMem[j] = b_prefixSum[j + PARTITION_START] + g_sharedMem[j - 1];
+            
+            g_sharedMem[THREAD_PART_END - 1] += WavePrefixSum(g_sharedMem[THREAD_PART_END - 1]);
+            
+            //Set Flag Payload
+            if (gtid.x == 0)
+            {
+                if (partitionIndex == 0)
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                else
+                    InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+            }
+            
+            uint aggregate = 0;
+            if (partitionIndex != 0)
+            {
+                int indexOffset = 0;
+                bool breaker = true;
+                do
+                {
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                    {
+                        uint flagPayload = b_state[i];
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
+                        {
+                            breaker = false;
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                            if (gtid.x == 0)
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2, flagPayload);
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                            indexOffset += gapIndex;
+                            break;
+                        }
+                    }
+                } while (WaveReadLaneFirst(breaker));
+            }
+        
+            aggregate = WaveReadLaneFirst(aggregate);
+            b_prefixSum[PARTITION_START + THREAD_PART_END - 1] = g_sharedMem[THREAD_PART_END - 1] + aggregate;
+            aggregate += gtid.x ? g_sharedMem[THREAD_PART_START - 1] : 0;
+            [unroll(7)]
+            for (int j = THREAD_PART_START; j < THREAD_PART_END - 1; ++j)
+                b_prefixSum[PARTITION_START + j] = g_sharedMem[j] + aggregate;
+        }
+    } while (partitionIndex + THREAD_BLOCKS < PARTITIONS);
+}
+
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
+[numthreads(LANE_COUNT, 1, 1)]
+void CD_D_Timing(int3 gtid : SV_GroupThreadID)
+{
+    int partitionIndex;
+    do
+    {
+        if (gtid.x == 0)
+            InterlockedAdd(b_state[PARTITIONS * e_repeats], 1, g_sharedMem[0]);
+        partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+
+        if (T_PART_INDEX == PARTITIONS - 1)
+        {
+            const int threadPartEnd = T_EXACT_THREAD_PART;
+            if (threadPartEnd)
+            {
+                g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + T_PART_START];
+                
+                for (int j = THREAD_PART_START + 1; j < threadPartEnd; ++j)
+                    g_sharedMem[j] = b_prefixSum[j + T_PART_START] + g_sharedMem[j - 1];
+                
+                g_sharedMem[threadPartEnd - 1] += WavePrefixSum(g_sharedMem[threadPartEnd - 1]);
+            }
+            
+            uint aggregate = 0;
+            int indexOffset = 0;
+            bool breaker = true;
+            do
+            {
+                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                {
+                    uint flagPayload = b_state[i];
+                    const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                    const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    if (inclusiveIndex < gapIndex)
+                    {
+                        breaker = false;
+                        aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                        break;
+                    }
+                    else
+                    {
+                        aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                        indexOffset += gapIndex;
+                        break;
+                    }
+                }
+            } while (WaveReadLaneFirst(breaker));
+        
+            if (threadPartEnd)
+            {
+                aggregate = WaveReadLaneFirst(aggregate);
+                b_prefixSum[T_PART_START + threadPartEnd - 1] = g_sharedMem[threadPartEnd - 1] + aggregate;
+                aggregate += gtid.x ? g_sharedMem[THREAD_PART_START - 1] : 0;
+                for (int j = THREAD_PART_START; j < threadPartEnd - 1; ++j)
+                    b_prefixSum[T_PART_START + j] = g_sharedMem[j] + aggregate;
+            }
+        }
+        else
+        {
+            //Per thread serial prefix sum
+            g_sharedMem[THREAD_PART_START] = b_prefixSum[THREAD_PART_START + T_PART_START];
+            
+            [unroll(7)] //thread partition size - 1
+            for (int j = THREAD_PART_START + 1; j < THREAD_PART_END; ++j)
+                g_sharedMem[j] = b_prefixSum[j + T_PART_START] + g_sharedMem[j - 1];
+            
+            g_sharedMem[THREAD_PART_END - 1] += WavePrefixSum(g_sharedMem[THREAD_PART_END - 1]);
+            
+            //Set Flag Payload
+            if (gtid.x == 0)
+            {
+                if (partitionIndex == 0)
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                else
+                    InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+            }
+            
+            uint aggregate = 0;
+            if (T_PART_INDEX != 0)
+            {
+                int indexOffset = 0;
+                bool breaker = true;
+                do
+                {
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                    {
+                        uint flagPayload = b_state[i];
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
+                        {
+                            breaker = false;
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                            if (gtid.x == 0)
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2, flagPayload);
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                            indexOffset += gapIndex;
+                            break;
+                        }
+                    }
+                } while (WaveReadLaneFirst(breaker));
+            }
+        
+            aggregate = WaveReadLaneFirst(aggregate);
+            b_prefixSum[T_PART_START + THREAD_PART_END - 1] = g_sharedMem[THREAD_PART_END - 1] + aggregate;
+            aggregate += gtid.x ? g_sharedMem[THREAD_PART_START - 1] : 0;
+            [unroll(7)]
+            for (int j = THREAD_PART_START; j < THREAD_PART_END - 1; ++j)
+                b_prefixSum[T_PART_START + j] = g_sharedMem[j] + aggregate;
+        }
+    } while (partitionIndex + THREAD_BLOCKS < PARTITIONS * e_repeats);
+}

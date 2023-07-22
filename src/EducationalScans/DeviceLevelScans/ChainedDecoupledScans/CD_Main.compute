@@ -1,0 +1,444 @@
+/******************************************************************************************************************
+ * Chained Decoupled Scan Main
+ *
+ * Scan:    Warp-sized radix raking reduce scan
+ *
+ * Variant: Raking warp-sized radix reduce using partitions of size equal to 
+ *          maximum shared memory.
+ *                    
+ * Notes:   This variant uses the last bit of the first element in shared memory as a flag
+ *          **Unrolls and preprocessor macros must be manually changed for AMD**
+ * 
+ * Author:  Thomas Smith 5/9/2023
+ *
+ * License: The Unlicense
+ *          This is free and unencumbered software released into the public domain.
+ *          For more information, please refer to the repository license or <https://unlicense.org>
+ *   
+ * Based off of Research by:
+ *          Duane Merrill, Nvidia Corporation
+ *          Michael Garland, Nvidia Corporation
+ *          https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back
+ *
+ * This implementation does not constitute ANY form of endorsement or promotion
+ * from its authors or Nvidia Corporation. In no event shall Nvidia Corporation
+ * be held liable for ANY damages arising in any way out of the use of this 
+ * software. The implementation author is not affiliated in ANY way with Nvidia
+ * Corporation.
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel CD_Main
+#pragma kernel CD_Main_Timing
+
+#define PARTITION_SIZE      8192
+#define PARTITION_MASK      8191
+#define GROUP_SIZE          1024
+#define THREAD_BLOCKS       256
+#define PART_LOG            13
+
+#define LANE_COUNT          32  // <---------------------------   For Nvidia; change depending on hardware
+#define LANE_MASK           31
+#define LANE_LOG            5
+#define WAVES_PER_GROUP     32    
+#define WAVE_PARTITION_SIZE 256
+#define WAVE_PART_LOG       8
+
+//#define LANE_COUNT            64 <-------------------------   AMD 
+//#define LANE_MASK             63
+//#define LANE_LOG              6    
+//#define WAVES_PER_GROUP       16
+//#define WAVE_PARTITION_SIZE   512
+//#define WAVE_PART_LOG         9
+
+#define FLAG_NOT_READY  0
+#define FLAG_AGGREGATE  1
+#define FLAG_INCLUSIVE  2
+#define FLAG_MASK       3
+
+#define LANE            (gtid.x & LANE_MASK)
+#define WAVE_INDEX      (gtid.x >> LANE_LOG)
+#define SPINE_INDEX     (((gtid.x + 1) << WAVE_PART_LOG) - 1)
+#define PARTITIONS      ((e_size & PARTITION_MASK) ? \
+                        (e_size >> PART_LOG) + 1 : \
+                        e_size >> PART_LOG )
+#define WAVE_PART_START (WAVE_INDEX << WAVE_PART_LOG)
+#define WAVE_PART_END   (WAVE_INDEX + 1 << WAVE_PART_LOG)
+#define PARTITION_START (partitionIndex << PART_LOG)
+#define EXACT_SIZE      (e_size - PARTITION_START)
+#define EXACT_WAVE_END  (WAVE_PART_END > EXACT_SIZE ? \
+                        ((EXACT_SIZE - 1 >> WAVE_PART_LOG) == WAVE_INDEX ? EXACT_SIZE : 0) : \
+                        WAVE_PART_END)
+
+//Adjusted partition indexes for timing kernel
+#define T_PART_INDEX        (partitionIndex & 32767)        //For 2^28 ONLY
+//#define T_PART_INDEX      (partitionIndex & 16383)        //For 2^27 ONLY
+#define T_PART_START        (T_PART_INDEX << PART_LOG)
+#define T_EXACT_SIZE        (e_size - T_PART_START)
+
+extern int e_size;
+extern int e_repeats;
+
+globallycoherent RWBuffer<uint> b_state;
+RWBuffer<uint> b_prefixSum;
+groupshared uint g_sharedMem[PARTITION_SIZE];
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += GROUP_SIZE * THREAD_BLOCKS)
+        b_prefixSum[i] = 1;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void CD_Main(int3 gtid : SV_GroupThreadID)
+{
+    int partitionIndex;
+    do
+    {
+        if (gtid.x == 0)
+            InterlockedAdd(b_state[PARTITIONS], 1, g_sharedMem[0]);
+        GroupMemoryBarrierWithGroupSync();
+        partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (partitionIndex == PARTITIONS - 1)
+        {
+            const int wavePartEnd = EXACT_WAVE_END;
+            
+            if (LANE < wavePartEnd - WAVE_PART_START)
+            {
+                //fix bug here
+                g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + PARTITION_START];
+                g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+            }
+            for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < wavePartEnd; i += LANE_COUNT)
+            {
+                g_sharedMem[i] = b_prefixSum[i + PARTITION_START];
+                g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            //groupwide partition aggregate
+            if (gtid.x < WAVES_PER_GROUP)
+            {
+                int t = SPINE_INDEX;
+                if (t > EXACT_SIZE - 1)
+                    t = (EXACT_SIZE - 1 >> WAVE_PART_LOG) == gtid.x ? EXACT_SIZE - 1 : PARTITION_SIZE - gtid.x;
+                g_sharedMem[t] += WavePrefixSum(g_sharedMem[t]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+            
+            uint aggregate = 0;
+            int indexOffset = 0;
+            do
+            {
+                if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                {
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                    {
+                        uint flagPayload = b_state[i];
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
+                        {
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                            if (gtid.x == 0)
+                            {
+                                InterlockedOr(g_sharedMem[0], 0x80000000);
+                                flagPayload = g_sharedMem[1];
+                                g_sharedMem[1] = aggregate;
+                                aggregate = flagPayload;
+                            }
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                            indexOffset += gapIndex;
+                            break;
+                        }
+                    }
+                }
+            } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
+            GroupMemoryBarrierWithGroupSync();
+            
+            //propogate aggregate values
+            if (gtid.x == 0)
+                g_sharedMem[0] &= 0x7FFFFFFF;
+            else
+                aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+            GroupMemoryBarrierWithGroupSync();
+            if (gtid.x == 0)
+                g_sharedMem[1] = aggregate;
+            if (gtid.x < 2)
+                aggregate = WaveReadLaneAt(aggregate, 1);
+            
+            const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
+            for (int i = LANE + WAVE_PART_START; i < wavePartEnd; i += LANE_COUNT)
+                b_prefixSum[i + PARTITION_START] = g_sharedMem[i] + (i < wavePartEnd - 1 ? prev : aggregate);
+        }
+        else
+        {
+
+            g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + PARTITION_START];
+            g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+
+            [unroll(7)]
+            for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < WAVE_PART_END; i += LANE_COUNT)
+            {
+                g_sharedMem[i] = b_prefixSum[i + PARTITION_START];
+                g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            //groupwide partition aggregate
+            if (gtid.x < WAVES_PER_GROUP)
+                g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]);
+            GroupMemoryBarrierWithGroupSync();
+            
+            //Set flag payload
+            if (gtid.x == 0)
+            {
+                if (partitionIndex == 0)
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                else
+                    InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+            }
+            
+            uint aggregate = 0;
+            if (partitionIndex != 0)
+            {
+                int indexOffset = 0;
+                do
+                {
+                    if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                    {
+                        for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                        {
+                            uint flagPayload = b_state[i];
+                            const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                            const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                            if (inclusiveIndex < gapIndex)
+                            {
+                                aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                                if (gtid.x == 0)
+                                {
+                                    InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
+                                    InterlockedOr(g_sharedMem[0], 0x80000000);
+                                    flagPayload = g_sharedMem[1];
+                                    g_sharedMem[1] = aggregate;
+                                    aggregate = flagPayload;
+                                }
+                                break;
+                            }
+                            else
+                            {
+                                aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                                indexOffset += gapIndex;
+                                break;
+                            }
+                        }
+                    }
+                } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
+                GroupMemoryBarrierWithGroupSync();
+            
+                //propogate aggregate values
+                if (gtid.x == 0)
+                    g_sharedMem[0] &= 0x7FFFFFFF;
+                else
+                    aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+                GroupMemoryBarrierWithGroupSync();
+                if (gtid.x == 0)
+                    g_sharedMem[1] = aggregate;
+                if (gtid.x < 2)
+                    aggregate = WaveReadLaneAt(aggregate, 1);
+            }
+            
+            const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
+            [unroll(8)]
+            for (int i = LANE + WAVE_PART_START; i < WAVE_PART_END; i += LANE_COUNT)
+                b_prefixSum[i + PARTITION_START] = g_sharedMem[i] + (i < WAVE_PART_END - 1 ? prev : aggregate);
+        } 
+    } while (partitionIndex + THREAD_BLOCKS < PARTITIONS);
+}
+
+/******************************************************************************
+ * This is timing version of the scan. It is as similar as possible to the above
+ * algorithm except that it can perform multiple loops. HOWEVER, IT IS NOT IDENTICAL,
+ * and should only be interpreted as an approximation of the original algorithm. 
+ ******************************************************************************/
+[numthreads(GROUP_SIZE, 1, 1)]
+void CD_Main_Timing(int3 gtid : SV_GroupThreadID)
+{
+    int partitionIndex;
+    do
+    {
+        if (gtid.x == 0)
+            InterlockedAdd(b_state[PARTITIONS * e_repeats], 1, g_sharedMem[0]);
+        GroupMemoryBarrierWithGroupSync();
+        partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (T_PART_INDEX == PARTITIONS - 1)
+        {
+            int wavePartEnd = WAVE_PART_END;
+            if (wavePartEnd > T_EXACT_SIZE)
+                wavePartEnd = (T_EXACT_SIZE - 1 >> WAVE_PART_LOG) == WAVE_INDEX ? T_EXACT_SIZE : 0;
+            
+            if (LANE < wavePartEnd - WAVE_PART_START)
+            {
+                g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + T_PART_START];
+                g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+            }
+            for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < wavePartEnd; i += LANE_COUNT)
+            {
+                g_sharedMem[i] = b_prefixSum[i + T_PART_START];
+                g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            //groupwide partition aggregate
+            if (gtid.x < WAVES_PER_GROUP)
+            {
+                int t = SPINE_INDEX;
+                if (t > T_EXACT_SIZE - 1)
+                    t = (T_EXACT_SIZE - 1 >> WAVE_PART_LOG) == gtid.x ? T_EXACT_SIZE - 1 : PARTITION_SIZE - gtid.x;
+                g_sharedMem[t] += WavePrefixSum(g_sharedMem[t]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+            
+            uint aggregate = 0;
+            int indexOffset = 0;
+            do
+            {
+                if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                {
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                    {
+                        uint flagPayload = b_state[i];
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
+                        {
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                            if (gtid.x == 0)
+                            {
+                                InterlockedOr(g_sharedMem[0], 0x80000000);
+                                flagPayload = g_sharedMem[1];
+                                g_sharedMem[1] = aggregate;
+                                aggregate = flagPayload;
+                            }
+                            break;
+                        }
+                        else
+                        {
+                            aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                            indexOffset += gapIndex;
+                            break;
+                        }
+                    }
+                }
+            } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
+            GroupMemoryBarrierWithGroupSync();
+            
+            //propogate aggregate values
+            if (gtid.x == 0)
+                g_sharedMem[0] &= 0x7FFFFFFF;
+            else
+                aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+            GroupMemoryBarrierWithGroupSync();
+            if (gtid.x == 0)
+                g_sharedMem[1] = aggregate;
+            if (gtid.x < 2)
+                aggregate = WaveReadLaneAt(aggregate, 1);
+              
+            const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
+            for (int i = LANE + WAVE_PART_START; i < wavePartEnd; i += LANE_COUNT)
+                b_prefixSum[i + T_PART_START] = g_sharedMem[i] + (i < wavePartEnd - 1 ? prev : aggregate);
+        }
+        else
+        {
+
+            g_sharedMem[LANE + WAVE_PART_START] = b_prefixSum[LANE + WAVE_PART_START + T_PART_START];
+            g_sharedMem[LANE + WAVE_PART_START] += WavePrefixSum(g_sharedMem[LANE + WAVE_PART_START]);
+
+            [unroll(7)]
+            for (int i = LANE + WAVE_PART_START + LANE_COUNT; i < WAVE_PART_END; i += LANE_COUNT)
+            {
+                g_sharedMem[i] = b_prefixSum[i + T_PART_START];
+                g_sharedMem[i] += WavePrefixSum(g_sharedMem[i]) + WaveReadLaneFirst(g_sharedMem[i - 1]);
+            }
+            GroupMemoryBarrierWithGroupSync();
+        
+            //groupwide partition aggregate
+            if (gtid.x < WAVES_PER_GROUP)
+                g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX]);
+            GroupMemoryBarrierWithGroupSync();
+            
+            //Set flag payload
+            if (gtid.x == 0)
+            {
+                if (T_PART_INDEX == 0)
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                else
+                    InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+            }
+            
+            uint aggregate = 0;
+            if (T_PART_INDEX != 0)
+            {
+                int indexOffset = 0;
+                do
+                {
+                    if (gtid.x < LANE_COUNT) //Restrict lookback to first warp
+                    {
+                        for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                        {
+                            uint flagPayload = b_state[i];
+                            const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                            const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                            if (inclusiveIndex < gapIndex)
+                            {
+                                aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                                if (gtid.x == 0)
+                                {
+                                    InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
+                                    InterlockedOr(g_sharedMem[0], 0x80000000);
+                                    flagPayload = g_sharedMem[1];
+                                    g_sharedMem[1] = aggregate;
+                                    aggregate = flagPayload;
+                                }
+                                break;
+                            }
+                            else
+                            {
+                                aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
+                                indexOffset += gapIndex;
+                                break;
+                            }
+                        }
+                    }
+                } while ((WaveReadLaneFirst(g_sharedMem[0]) & 0x80000000) == 0);
+                GroupMemoryBarrierWithGroupSync();
+            
+                //propogate aggregate values
+                if (gtid.x == 0)
+                    g_sharedMem[0] &= 0x7FFFFFFF;
+                else
+                    aggregate = WaveReadLaneFirst(g_sharedMem[1]);
+                GroupMemoryBarrierWithGroupSync();
+                if (gtid.x == 0)
+                    g_sharedMem[1] = aggregate;
+                if (gtid.x < 2)
+                    aggregate = WaveReadLaneAt(aggregate, 1);
+            }
+
+            const uint prev = (WAVE_INDEX ? WaveReadLaneFirst(g_sharedMem[WAVE_PART_START - 1]) : 0) + aggregate;
+            [unroll(8)]
+            for (int i = LANE + WAVE_PART_START; i < WAVE_PART_END; i += LANE_COUNT)
+                b_prefixSum[i + T_PART_START] = g_sharedMem[i] + (i < WAVE_PART_END - 1 ? prev : aggregate);
+        }
+    } while (partitionIndex + THREAD_BLOCKS < PARTITIONS * e_repeats);
+}
