@@ -68,9 +68,10 @@ Eventually I plan on making a tool that parse my Nvidia targetted shader to outp
 
 1. Download or clone the repository.
 2. Drag the contents of `src` into a desired folder within a Unity project.
-3. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
-4. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
-5. Ensure the sliders are set to nonzero values.
+3. If you are just looking for the fastest scans to add to your codebase, you'll find those in the `MainScans` folder. If you are interested in looking at the various implementations of scans, you'll find those in the `EducationalScans` folder.
+4. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
+5. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
+6. Ensure the sliders are set to nonzero values.
 
 If you did this correctly you should see this in the inspector:
 
@@ -935,7 +936,7 @@ update the flag value to `2`, indicating that the inclusive sum of all preceedin
           {
               if (gtid.x < LANE_COUNT)
               {
-                  for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                  for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                   {
                       uint flagPayload = b_state[i];
                       const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
