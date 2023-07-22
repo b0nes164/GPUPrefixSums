@@ -48,7 +48,7 @@ extern int e_repeats;
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
-#define FLAG_PREFIX     2
+#define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
 #define PARTITIONS          ((e_size & PARTITION_MASK) ? \
@@ -109,17 +109,15 @@ void CD_D(int3 gtid : SV_GroupThreadID)
             bool breaker = true;
             do
             {
-                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                 {
                     uint flagPayload = b_state[i];
-                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
-                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                    if (prefixIndex < gapIndex)
+                    const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                    const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    if (inclusiveIndex < gapIndex)
                     {
                         breaker = false;
-                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
-                        if (gtid.x == 0)
-                            InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + g_sharedMem[EXACT_PART_SIZE - 1]) << 2), flagPayload);
+                        aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                         break;
                     }
                     else
@@ -155,7 +153,7 @@ void CD_D(int3 gtid : SV_GroupThreadID)
             if (gtid.x == 0)
             {
                 if (partitionIndex == 0)
-                    InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
                 else
                     InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
             }
@@ -167,17 +165,17 @@ void CD_D(int3 gtid : SV_GroupThreadID)
                 bool breaker = true;
                 do
                 {
-                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                     {
                         uint flagPayload = b_state[i];
-                        int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
-                        int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
                         {
                             breaker = false;
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + g_sharedMem[PARTITION_SIZE - 1]) << 2), flagPayload);
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2, flagPayload);
                             break;
                         }
                         else
@@ -233,17 +231,15 @@ void CD_D_Timing(int3 gtid : SV_GroupThreadID)
             bool breaker = true;
             do
             {
-                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                 {
                     uint flagPayload = b_state[i];
-                    int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
-                    int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                    if (prefixIndex < gapIndex)
+                    const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                    const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    if (inclusiveIndex < gapIndex)
                     {
                         breaker = false;
-                        aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
-                        if (gtid.x == 0)
-                            InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + g_sharedMem[T_EXACT_PART_SIZE - 1]) << 2), flagPayload);
+                        aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                         break;
                     }
                     else
@@ -279,7 +275,7 @@ void CD_D_Timing(int3 gtid : SV_GroupThreadID)
             if (gtid.x == 0)
             {
                 if (partitionIndex == 0)
-                    InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
                 else
                     InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_SIZE - 1] << 2));
             }
@@ -291,17 +287,17 @@ void CD_D_Timing(int3 gtid : SV_GroupThreadID)
                 bool breaker = true;
                 do
                 {
-                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                     {
                         uint flagPayload = b_state[i];
-                        int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
-                        int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                        const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                        if (inclusiveIndex < gapIndex)
                         {
                             breaker = false;
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ ((aggregate + g_sharedMem[PARTITION_SIZE - 1]) << 2), flagPayload);
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2, flagPayload);
                             break;
                         }
                         else

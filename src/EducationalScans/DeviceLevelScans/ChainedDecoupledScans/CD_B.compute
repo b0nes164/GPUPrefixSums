@@ -67,7 +67,7 @@
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
-#define FLAG_PREFIX     2
+#define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
 #define LANE                    (gtid.x & LANE_MASK)
@@ -126,7 +126,6 @@ void CD_B(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
         partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
         GroupMemoryBarrierWithGroupSync();
         
-        //To catch strange behaviour at 2^21 where unused threadgroups somehow bypass the loop condition
         if (partitionIndex >= PARTITIONS)
             break;
         
@@ -180,7 +179,7 @@ void CD_B(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
         if (gtid.x == 0)
         {
             if (partitionIndex == 0)
-                InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (subAggregate << 2));
+                InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (subAggregate << 2));
             else
                 InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (subAggregate << 2));
         }
@@ -193,17 +192,17 @@ void CD_B(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
             {
                 if (gtid.x < LANE_COUNT)
                 {
-                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                     {
                         uint flagPayload = b_state[i];
-                        const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                         const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        if (inclusiveIndex < gapIndex)
                         {
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
                             {
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + subAggregate << 2), flagPayload);
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
                                 InterlockedOr(g_sharedMem[0], 0x80000000);
                                 flagPayload = g_sharedMem[1];
                                 g_sharedMem[1] = aggregate;
@@ -337,7 +336,6 @@ void CD_B_Timing(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
         partitionIndex = WaveReadLaneFirst(g_sharedMem[0]);
         GroupMemoryBarrierWithGroupSync();
         
-        //To catch strange behaviour at 2^21 where unused threadgroups somehow bypass the loop condition
         if (partitionIndex >= PARTITIONS * e_repeats)
             break;
         
@@ -391,7 +389,7 @@ void CD_B_Timing(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
         if (gtid.x == 0)
         {
             if (T_PART_INDEX == 0)
-                InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (subAggregate << 2));
+                InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (subAggregate << 2));
             else
                 InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (subAggregate << 2));
         }
@@ -404,17 +402,17 @@ void CD_B_Timing(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
             {
                 if (gtid.x < LANE_COUNT)
                 {
-                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
+                    for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
                     {
                         uint flagPayload = b_state[i];
-                        const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                         const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        if (inclusiveIndex < gapIndex)
                         {
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
                             {
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + subAggregate << 2), flagPayload);
+                                InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
                                 InterlockedOr(g_sharedMem[0], 0x80000000);
                                 flagPayload = g_sharedMem[1];
                                 g_sharedMem[1] = aggregate;

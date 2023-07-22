@@ -57,7 +57,7 @@
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
-#define FLAG_PREFIX     2
+#define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
 #define LANE            (gtid.x & LANE_MASK)
@@ -155,17 +155,13 @@ void CD_Main_Vectorized(int3 gtid : SV_GroupThreadID)
                     for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                     {
                         uint flagPayload = b_state[i];
-                        const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                         const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        if (inclusiveIndex < gapIndex)
                         {
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
                             {
-                                //use flagPayload as a dummy variable, as we are done with it, because 
-                                //InterlockedExchange is the easiest way of updating the global flag payload
-                                //InterlockedCompareStore appears to be significantly slower
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX, flagPayload);
                                 InterlockedOr(g_sharedMem[0].x, 0x80000000);
                                 flagPayload = g_sharedMem[1].x;
                                 g_sharedMem[1].x = aggregate;
@@ -226,7 +222,7 @@ void CD_Main_Vectorized(int3 gtid : SV_GroupThreadID)
             if (gtid.x == 0)
             {
                 if (partitionIndex == 0)
-                    InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[PARTITION_MASK].w << 2));
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_MASK].w << 2));
                 else
                     InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_MASK].w << 2));
             }
@@ -242,17 +238,14 @@ void CD_Main_Vectorized(int3 gtid : SV_GroupThreadID)
                         for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                         {
                             uint flagPayload = b_state[i];
-                            const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                            const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                             const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                            if (prefixIndex < gapIndex)
+                            if (inclusiveIndex < gapIndex)
                             {
-                                aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                                aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                                 if (gtid.x == 0)
                                 {
-                                    //use flagPayload as a dummy variable, as we are done with it, because 
-                                    //InterlockedExchange is the easiest way of updating the global flag payload
-                                    //InterlockedCompareStore appears to be significantly slower
-                                    InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + g_sharedMem[PARTITION_MASK].w << 2), flagPayload);
+                                    InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
                                     InterlockedOr(g_sharedMem[0].x, 0x80000000);
                                     flagPayload = g_sharedMem[1].x;
                                     g_sharedMem[1].x = aggregate;
@@ -352,14 +345,13 @@ void CD_Main_Vectorized_Timing(int3 gtid : SV_GroupThreadID)
                     for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                     {
                         uint flagPayload = b_state[i];
-                        const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                        const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                         const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                        if (prefixIndex < gapIndex)
+                        if (inclusiveIndex < gapIndex)
                         {
-                            aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                             if (gtid.x == 0)
                             {
-                                InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX, flagPayload);
                                 InterlockedOr(g_sharedMem[0].x, 0x80000000);
                                 flagPayload = g_sharedMem[1].x;
                                 g_sharedMem[1].x = aggregate;
@@ -419,7 +411,7 @@ void CD_Main_Vectorized_Timing(int3 gtid : SV_GroupThreadID)
             if (gtid.x == 0)
             {
                 if (T_PART_INDEX == 0)
-                    InterlockedOr(b_state[partitionIndex], FLAG_PREFIX ^ (g_sharedMem[PARTITION_MASK].w << 2));
+                    InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PARTITION_MASK].w << 2));
                 else
                     InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PARTITION_MASK].w << 2));
             }
@@ -435,14 +427,14 @@ void CD_Main_Vectorized_Timing(int3 gtid : SV_GroupThreadID)
                         for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; i -= LANE_COUNT)
                         {
                             uint flagPayload = b_state[i];
-                            const int prefixIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_PREFIX ? LANE_COUNT : 0));
+                            const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
                             const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                            if (prefixIndex < gapIndex)
+                            if (inclusiveIndex < gapIndex)
                             {
-                                aggregate += WaveActiveSum(gtid.x <= prefixIndex ? (flagPayload >> 2) : 0);
+                                aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
                                 if (gtid.x == 0)
                                 {
-                                    InterlockedExchange(b_state[partitionIndex], FLAG_PREFIX ^ (aggregate + g_sharedMem[PARTITION_MASK].w << 2), flagPayload);
+                                    InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
                                     InterlockedOr(g_sharedMem[0].x, 0x80000000);
                                     flagPayload = g_sharedMem[1].x;
                                     g_sharedMem[1].x = aggregate;
