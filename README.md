@@ -20,13 +20,11 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
   
 </br>Unfortunately, AMD, Nvidia, and integrated graphics usually have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because we are manually unrolling loops with the `[unroll(x)]` attribute, changing the wave size also necessitates changing these unrolls. Furthermore Unity does not support runtime compilation of compute shaders so we cannot poll the hardware at runtime to compile a targetted shader variant. Although Unity does have the `multi_compile` functionality, it is a very cumbersome solution because it means maintaining and compiling a copy of each kernel for each hardware case.
 
-Eventually I plan on making a tool that parse my Nvidia targetted shader to output a `multi_compile` version for all hardware cases, but until then non-Nvidia users will have to manually change the preprocessor macros and unrolls in the `.compute` file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
+Eventually I will implement `multi_compile`, but until then non-Nvidia users will have to manually change the preprocessor macros in the `.compute` file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
 
   ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
 
-  Comment out or delete the Nvidia values, and uncomment the AMD values. Next, search for the `[unroll(x)]` attributes and change the value to match the loop iterations at the new wave size:
-
-  ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/6e20a567-3df5-45ab-ab5b-448fbc5bb2a1)
+Comment out or delete the Nvidia values, and uncomment the AMD values.
  
 </details>
 
@@ -48,9 +46,9 @@ Eventually I plan on making a tool that parse my Nvidia targetted shader to outp
 
 <details>
   
-  <summary>All scans are inclusive.</summary>
+  <summary><s>All scans are inclusive.</s> Exclusive prefix sums added!</summary>
 
-  </br>I have exclusive versions of the scans, but I would like to polish them a little more and will release them sometime in the future.
+  </br>~~I have exclusive versions of the scans, but I would like to polish them a little more and will release them sometime in the future.~~
   
 </details>
 
@@ -68,15 +66,15 @@ Eventually I plan on making a tool that parse my Nvidia targetted shader to outp
 
 1. Download or clone the repository.
 2. Drag the contents of `src` into a desired folder within a Unity project.
-3. If you are just looking for the fastest scans to add to your codebase, you'll find those in the `MainScans` folder. If you are interested in looking at the various implementations of scans, you'll find those in the `EducationalScans` folder.
-4. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere + Dispatcher.cs`.
+3. All build ready prefix sums can be found in the `MainPrefixSums` folder. The differing prefix sum variants can be found in the `Survey` folder. **However, these variants are not maintained,** and should only be used as a learning tool.
+4. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere.cs`.
 5. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
-6. Ensure the sliders are set to nonzero values.
+6. Ensure the slider is set to a nonzero value.
 
 If you did this correctly you should see this in the inspector:
 
+![Example1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/acd77d76-5604-409f-87be-61c72a86f20f)
 
-![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/70bb5097-fff2-44e5-b396-2930a059fbad)
 <details>
 
 <summary>
@@ -85,29 +83,24 @@ If you did this correctly you should see this in the inspector:
 
 </summary>
   
-![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9d79a090-2f13-4031-925a-ef0788e75bf3)
+![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/067b9d12-582d-4c30-9529-519398ef0d0b)
 
-Every scan dispatcher inherits a testing suite that can be controlled in the inspector.
 
-+ `Validate Sum` performs `Kernel Iterations` number of prefix sums on a buffer of size 2^`SizeExponent`, then reads result back to host CPU memory to validate the results. If you have `Validate Text` ticked, any errors found will printed in the debug log. For very large sums, this can take several minutes, so if you don't want absolutely every error printed you can tick `Quick Text` which limits the number of errors printed to 1024.
+Every scan dispatcher has a suite of tests which can be controlled directly from the inspector.
 
-+ `Validate Sum Random`/ `Validate Sum Monotonic` perform a single prefix sum on a buffer of either random values or a sequence of postive integers. By default, the buffer is filled with the value 1. This makes error checking very simple, because the corresponding correct prefix sum is the sequence of positive integers up to the size of the buffer. However this makes some other errors possible, so to cover our bases we include this test.
++ `Validate Prefix Sum` performs a prefix sum at the current `Input Size`, then reads the output back into CPU memory for validation.
 
-+ `Debug At Size` performs a single prefix sum on a buffer of size `Specific Size`. This is a way to directly test the validty of the prefix sum on buffer sizes that are not powers of two.
++ `Validate Prefix Sum Random` performs a prefix sum on a buffer of random values at the current `Input Size`. By default, the buffer is filled with the value 1. This makes error checking very simple, because the correct prefix sum is the sequence of positive integers. However this makes some other errors possible, so to cover our bases we include this test.
 
-+ `Debug State` performs a single prefix sum of size 2^`SizeExponent`, then prints the contents of the `State Buffer` into the debug log. The `State Buffer` contains the threadblock aggregates in the device level scans, so `Debug State` can be used to verify that the aggregation is performed correctly.
++ `Debug Prefix Sum` performs a prefix sum at the current `Input Size`, then prints the output into the debug log without any validation.
 
-+ `Torture Test` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`. It does not perform any validation and should be used to verify the stability of a scan. 
++ `Debug State` is exclusive to _ChainedScanWithDecoupledLookback_, and prints the threadblock aggregate values in the auxillary buffer. It should be used to verify that the lookback phase is executing correctly.
+  
++ `Timing Test` times the execution of the prefix sum. However, this is not the true execution time of the algorithm, see testing methodology section for more information.
 
-+ `Timing Test` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then prints the total time taken to complete each kernel in the debug log. However, **this is not** the actual speed of the algorithm. This is because, to the best of my knowledge, there is no way to time the kernel in-situ in HLSL. Neither is there a way to directly record kernel completion time in host CPU code, at least not in Unity. Instead we are forced to make an `AsyncGPUReadback.Request()`, which waits until the kernel completes writing to the buffer then reads **the entire buffer** back into host CPU memory. While this does time the kernel, the time produced will also include the GPU - CPU readback time, **which can be as much as 99% of the total time value. Thus, the time value produced by this test should only be used as a relative measurement between tests.** To see how the algorithm was actually timed, see the Testing Methodology section below.
++ `Validate Powers of Two` performs a prefix sum at an input size of each power of two from 21 to 28. Useful as a quick measure of correct execution of the prefix sum.
 
-+ `Record Timing Data` performs `Kernel Iterations` number of prefix sums at size 2^`SizeExponent`, then writes each indivual kernel completion time to a `.csv` file. Note that this has the same shortcomings as `Timing Test`.
-
-+ `Validate Powers of Two` performs a single prefix sum at all powers of two which the prefix sum is designed for. Typically for the device-level scans this is 2^21 to 2^28, 2^28 being the largest sized buffer that Unity can allocate.
-
-+ `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes. This test can take quite some time.
-
-+ `Advanced Timing Mode` switches from the default kernel to a timing-specific kernel which is almost identical, but can perform `Scan Repeats` repititions of the algorithm **inside of the kernel**. However, as this can sometimes mean using an additional register to control the loop or additional computation to limit indexes to the buffer, **this is only an approximation of the kernel**. See Testing Methodology.
++ `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes.
 
 </details>
 
