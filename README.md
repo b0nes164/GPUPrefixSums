@@ -864,7 +864,6 @@ extern int e_size;                              //The size of the buffer, this i
 RWBuffer<uint> b_prefixSum;                     //The buffer to be prefix_summed
 globallycoherent RWBuffer<uint> b_state;        //The buffer used for threadblock aggregates.
 groupshared uint g_sharedMem[PARTITION_SIZE];   //The array of shared memory we use for intermediate values
-groupshared bool g_breaker;                     //Boolean used to control lookback loop.
 groupshared uint g_aggregate;                   //Value used to pass the exlusive aggregate from lookback
   
 [numthreads(GROUP_SIZE, 1, 1)]
@@ -929,41 +928,46 @@ update the flag value to `2`, indicating that the inclusive sum of all preceedin
 
 ```HLSL
       uint aggregate = 0;
-      if (partitionIndex != 0)
+      if (partitionIndex)
       {
-          int indexOffset = 0;
-          do
+          if (gtid.x < LANE_COUNT)
           {
-              if (gtid.x < LANE_COUNT)
+              for (int k = partitionIndex - gtid.x - 1; 0 <= k;)
               {
-                  for (int i = partitionIndex - (gtid.x + indexOffset + 1); 0 <= i; )
+                  uint flagPayload = b_state[k];
+                  const int inclusiveIndex = WaveActiveMin(LANE + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
+                  const int gapIndex = WaveActiveMin(LANE + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                  if (inclusiveIndex < gapIndex)
                   {
-                      uint flagPayload = b_state[i];
-                      const int inclusiveIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
-                      const int gapIndex = WaveActiveMin(gtid.x + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
-                      if (inclusiveIndex < gapIndex)
+                      aggregate += WaveActiveSum(LANE <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                      if (LANE == 0)
                       {
-                          aggregate += WaveActiveSum(gtid.x <= inclusiveIndex ? (flagPayload >> 2) : 0);
-                          if (gtid.x == 0)
-                          {
-                              InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
-                              g_breaker = false;
-                              g_aggregate = aggregate;
-                          }
-                          break;
+                          InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
+                          g_aggregate = aggregate;
+                      }
+                      break;
+                  }
+                  else
+                  {
+                      if (gapIndex < LANE_COUNT)
+                      {
+                          aggregate += WaveActiveSum(LANE < gapIndex ? (flagPayload >> 2) : 0);
+                          k -= gapIndex;
                       }
                       else
                       {
-                          aggregate += WaveActiveSum(gtid.x < gapIndex ? (flagPayload >> 2) : 0);
-                          indexOffset += gapIndex;
-                          break;
+                          aggregate += WaveActiveSum(flagPayload >> 2);
+                          k -= LANE_COUNT;
                       }
                   }
               }
-          } while ((WaveReadLaneFirst(g_breaker));
-  
-          if(WAVE_INDEX != 0)
-            aggregate = g_aggregate;
+          }
+          GroupMemoryBarrierWithGroupSync();
+      
+          //propogate aggregate values
+          if (WAVE_INDEX || LANE)
+              aggregate = WaveReadLaneFirst(g_aggregate);
+          GroupMemoryBarrierWithGroupSync();
       }
 ```
   
