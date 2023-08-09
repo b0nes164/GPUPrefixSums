@@ -1,0 +1,65 @@
+/*****************************************************************************
+ * Warp Level Exclusive Vectorized Prefix Sum
+ * 
+ * Variant: Serialized summing across vectorized counts.
+ *
+ * Notes: **Preprocessor macros must be manually changed for AMD**
+ * 
+ * Author:  Thomas Smith 8/9/2023
+ * 
+ * License: The Unlicense
+ *          This is free and unencumbered software released into the public domain.
+ *          For more information, please refer to the repository license or <https://unlicense.org>
+ *
+ ******************************************************************************/
+#pragma use_dxc
+#pragma kernel Init
+#pragma kernel WarpPrefixSumExclusive
+
+#define VEC_LOG         2
+#define VEC_MASK        3
+
+#define LANE_COUNT      32 //<-------------------------   For Nvidia; change depending on hardware
+#define LANE_MASK       31
+
+//#define LANE_COUNT    64   <-------------------------   AMD 
+//#define LANE_MASK     63
+
+extern int e_size;
+RWStructuredBuffer<uint> b_prefixLoad;
+RWBuffer<uint4> b_prefixSum;
+
+[numthreads(1024, 1, 1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    for (int i = id.x; i < e_size; i += 256 * 1024)
+        b_prefixLoad[i] = 1;
+}
+
+[numthreads(LANE_COUNT, 1, 1)]
+void WarpPrefixSumExclusive(int3 gtid : SV_GroupThreadID)
+{
+    uint aggregate = 0;
+    const int vectorSize = (e_size >> VEC_LOG) + (e_size & VEC_MASK ? 1 : 0);
+    for (int i = gtid.x; i < vectorSize; i += LANE_COUNT)
+    {
+        uint4 t = b_prefixSum[i];
+        uint t2 = t.x;
+        t.x += t.y;
+        t.y = t2;
+        
+        t2 = t.x;
+        t.x += t.z;
+        t.z = t2;
+        
+        t2 = t.x;
+        t.x += t.w;
+        t.w = t2;
+        
+        t += WavePrefixSum(t.x);
+        t2 = WaveReadLaneAt(t.x, LANE_MASK);
+        t.x = gtid.x ? WaveReadLaneAt(t.x, gtid.x - 1) : 0;
+        b_prefixSum[i] = t + aggregate;
+        aggregate += t2;
+    }
+}

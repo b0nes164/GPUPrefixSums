@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class ChainedDecoupledExclusive : MonoBehaviour
+public class WarpPrefixSumExclusive : MonoBehaviour
 {
     private enum TestType
     {
@@ -18,9 +18,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
 
         //Prints 
         DebugPrefixSum,
-
-        //Prints the values of the state and index buffer. Use to ensure that the lookback is functioning properly.
-        DebugState,
 
         //Times the execution of the prefix sum kernel. Read testing methodology for more information.
         TimingTest,
@@ -58,21 +55,17 @@ public class ChainedDecoupledExclusive : MonoBehaviour
     private bool breaker;
 
     private ComputeBuffer prefixSumBuffer;
-    private ComputeBuffer stateBuffer;
     private ComputeBuffer timingBuffer;
-    private ComputeBuffer indexBuffer;
 
-    private int partitionSize;
     private int threadBlocks;
     private string computeShaderString;
 
     private uint[] validationArray;
 
-    ChainedDecoupledExclusive()
+    WarpPrefixSumExclusive()
     {
-        partitionSize = 8192;
-        threadBlocks = 256;
-        computeShaderString = "ChainedDecoupledExclusive";
+        threadBlocks = 1;
+        computeShaderString = "WarpPrefixSumExclusive";
     }
 
     private void Start()
@@ -81,7 +74,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
         size = inputSize;
         UpdateSize(size);
         UpdateTimingBuffer();
-        UpdateIndexBuffer();
         breaker = true;
         Debug.Log(computeShaderString + ": init complete.");
     }
@@ -124,9 +116,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
             case TestType.DebugPrefixSum:
                 StartCoroutine(DebugPrefixSum());
                 break;
-            case TestType.DebugState:
-                StartCoroutine(DebugState());
-                break;
             case TestType.TimingTest:
                 StartCoroutine(TimingTest());
                 break;
@@ -161,7 +150,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
     {
         compute.SetInt("e_size", _size);
         UpdatePrefixBuffer(_size);
-        UpdateStateBuffer(_size);
     }
 
     private void UpdatePrefixBuffer(int _size)
@@ -174,32 +162,16 @@ public class ChainedDecoupledExclusive : MonoBehaviour
         compute.SetBuffer(k_scan, "b_prefixSum", prefixSumBuffer);
     }
 
-    private void UpdateStateBuffer(int _size)
-    {
-        if (stateBuffer != null)
-            stateBuffer.Dispose();
-        stateBuffer = new ComputeBuffer(_size / partitionSize, sizeof(uint));
-        compute.SetBuffer(k_init, "b_state", stateBuffer);
-        compute.SetBuffer(k_scan, "b_state", stateBuffer);
-    }
-
     private void UpdateTimingBuffer()
     {
         timingBuffer = new ComputeBuffer(1, sizeof(uint));
+        compute.SetBuffer(k_init, "b_timing", timingBuffer);
         compute.SetBuffer(k_scan, "b_timing", timingBuffer);
-    }
-
-    private void UpdateIndexBuffer()
-    {
-        indexBuffer = new ComputeBuffer(1, sizeof(uint));
-        compute.SetBuffer(k_init, "b_index", indexBuffer);
-        compute.SetBuffer(k_scan, "b_index", indexBuffer);
     }
 
     private void ResetBuffers()
     {
-        compute.SetBool("e_initRandom", false);
-        compute.Dispatch(k_init, threadBlocks, 1, 1);
+        compute.Dispatch(k_init, 256, 1, 1);
     }
 
     private void DispatchKernels()
@@ -288,35 +260,12 @@ public class ChainedDecoupledExclusive : MonoBehaviour
         breaker = true;
     }
 
-    private IEnumerator DebugState()
-    {
-        breaker = false;
-
-        validationArray = new uint[stateBuffer.count];
-        uint[] tempArray = new uint[1];
-
-        DispatchKernels();
-        stateBuffer.GetData(validationArray);
-        indexBuffer.GetData(tempArray);
-
-        Debug.Log("---------------STATE VALUES---------------");
-        for (int i = 0; i < validationArray.Length; ++i)
-            Debug.Log(i + ": " + (validationArray[i] >> 2));
-
-        Debug.Log("---------------INDEX VALUE----------------");
-        Debug.Log(tempArray[0]);
-
-        yield return new WaitForSeconds(.1f);   //To prevent unity from crashing
-
-        breaker = true;
-    }
-
     private IEnumerator TimingTest()
     {
         breaker = false;
 
         //make sure the init kernel is done
-        AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(stateBuffer);
+        AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(timingBuffer);
         yield return new WaitUntil(() => request.done);
 
         float time = Time.realtimeSinceStartup;
@@ -356,17 +305,17 @@ public class ChainedDecoupledExclusive : MonoBehaviour
         Debug.Log("Beginning Validate All Off Sizes. This may take a while.");
 
         validationCount = 0;
-        for (int i = 1; i <= partitionSize; ++i)
+        for (int i = 1; i <= 8192; ++i)
         {
             yield return TestAtSize((1 << 16) + i);
             if ((i & 31) == 0)
                 Debug.Log("Running");
         }
 
-        if (validationCount == partitionSize)
-            Debug.Log("[" + validationCount + "/" + partitionSize + "]. ALL TESTS PASSED");
+        if (validationCount == 8192)
+            Debug.Log("[" + validationCount + "/" + 8192 + "]. ALL TESTS PASSED");
         else
-            Debug.LogError("[" + validationCount + "/" + partitionSize + "] TESTS PASSED");
+            Debug.LogError("[" + validationCount + "/" + 8192 + "] TESTS PASSED");
 
         UpdateSize(size);
         breaker = true;
@@ -376,7 +325,7 @@ public class ChainedDecoupledExclusive : MonoBehaviour
     {
         UpdateSize(_size);
         ResetBuffers();
-        AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(stateBuffer);
+        AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(timingBuffer);
         yield return new WaitUntil(() => request.done);
 
         DispatchKernels();
@@ -409,7 +358,7 @@ public class ChainedDecoupledExclusive : MonoBehaviour
                 isValidated = false;
                 if (printValidationText)
                 {
-                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + i + ", " + validationArray[i]);
+                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + (i + 1) + ", " + validationArray[i]);
                     if (quickText)
                     {
                         errCount++;
@@ -427,11 +376,7 @@ public class ChainedDecoupledExclusive : MonoBehaviour
     {
         if (prefixSumBuffer != null)
             prefixSumBuffer.Dispose();
-        if (stateBuffer != null)
-            stateBuffer.Dispose();
         if (timingBuffer != null)
             timingBuffer.Dispose();
-        if (indexBuffer != null)
-            indexBuffer.Dispose();
     }
 }

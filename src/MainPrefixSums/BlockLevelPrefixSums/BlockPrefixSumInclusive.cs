@@ -29,21 +29,8 @@ public class BlockPrefixSumInclusive : MonoBehaviour
         ValidateAllOffSizes,
     }
 
-
-    //Because different hardware manufacturers have different wave sizes, you MUST select the manufacturer of your hardware
-    //otherwise the prefix sum will not work
-    private enum HardWareType
-    {
-        AMD,
-
-        Nvida,
-    }
-
     [SerializeField]
     private ComputeShader compute;
-
-    [SerializeField]
-    private HardWareType hardWareType;
 
     [SerializeField]
     private TestType testType;
