@@ -102,6 +102,10 @@ Every scan dispatcher has a suite of tests which can be controlled directly from
 
 + `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes.
 
++ `PrintValidationText` prints any errors during a validation test in the deubg log. This can be quite slow if there are many errors, so it is recommended to also have `QuickText` enabled.
+
++ `QuickText` limits the number of errors printed during a validation test to 1024.   
+
 </details>
 
 <!-- This content will not appear in the rendered Markdown -->
@@ -1015,8 +1019,8 @@ void MemCpy(int3 id : SV_DispatchThreadID)
 }
 ```
 <br>
+
 We can confirm that the input size *is* affecting the speed of the `MemCpy` by increasing `k`, effectively running the `MemCpy` at input sizes of `k` * 2^28. Indeed, running 1000 tests at each `k` from 1 to 40, we get the following result:
-<br>
 <br>
 <br>
 
