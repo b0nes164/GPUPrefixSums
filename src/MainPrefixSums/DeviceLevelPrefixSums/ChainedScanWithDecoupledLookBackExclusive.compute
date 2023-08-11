@@ -1,9 +1,7 @@
 /******************************************************************************
- * Exclusive Vectorized Chained Decoupled Scan
+ * Exclusive Vectorized Chained Scan With Decoupled Lookback
  *
- * Scan:    Warp-sized radix raking reduce scan
- *
- * Variant: Raking warp-sized radix reduce using partitions of size equal to 
+ * Variant: Raking warp-sized radix reduce scan using partitions of size equal to 
  *          maximum shared memory.
  *                    
  * Notes:   **Preprocessor macros must be manually changed for AMD**

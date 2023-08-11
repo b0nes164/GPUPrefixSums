@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class ChainedDecoupledExclusive : MonoBehaviour
+public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 {
     private enum TestType
     {
@@ -68,11 +68,11 @@ public class ChainedDecoupledExclusive : MonoBehaviour
 
     private uint[] validationArray;
 
-    ChainedDecoupledExclusive()
+    ChainedScanWithDecoupledLookbackInclusive()
     {
         partitionSize = 8192;
         threadBlocks = 256;
-        computeShaderString = "ChainedDecoupledExclusive";
+        computeShaderString = "ChainedDecoupledInclusive";
     }
 
     private void Start()
@@ -198,7 +198,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
 
     private void ResetBuffers()
     {
-        compute.SetBool("e_initRandom", false);
         compute.Dispatch(k_init, threadBlocks, 1, 1);
     }
 
@@ -244,6 +243,8 @@ public class ChainedDecoupledExclusive : MonoBehaviour
 
         for (int i = 0; i < size; ++i)
         {
+            total += temp[i];
+
             if (validationArray[i] != total)
             {
                 isValidated = false;
@@ -258,8 +259,6 @@ public class ChainedDecoupledExclusive : MonoBehaviour
                     }
                 }
             }
-
-            total += temp[i];
         }
         yield return new WaitForSeconds(.1f);
 
@@ -392,7 +391,7 @@ public class ChainedDecoupledExclusive : MonoBehaviour
     {
         for (uint i = 0; i < _size; ++i)
         {
-            if (validationArray[i] != i)
+            if (validationArray[i] != (i + 1))
                 return false;
         }
         return true;
@@ -404,12 +403,12 @@ public class ChainedDecoupledExclusive : MonoBehaviour
         int errCount = 0;
         for (uint i = 0; i < _size; ++i)
         {
-            if (validationArray[i] != i)
+            if (validationArray[i] != (i + 1))
             {
                 isValidated = false;
                 if (printValidationText)
                 {
-                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + i + ", " + validationArray[i]);
+                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + (i + 1) + ", " + validationArray[i]);
                     if (quickText)
                     {
                         errCount++;
