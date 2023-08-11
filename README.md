@@ -1,5 +1,5 @@
 # GPU Prefix Sums
-![Prefix Sum Speeds, in Unity Editor, RTX 2080 Super](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/7fd486be-cfd5-4a03-b24b-2d850431d8fd)
+![Prefix Sum Speed Comparison](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f2088c9d-a3e5-4b6c-b318-4765501f9fb6)
 
 This project is a survey of GPU prefix sums, ranging from the warp to the device level, with the aim of providing developers an uncompiled look at modern prefix sum implementations. In particular, this project was inspired by Duane Merill's [research](https://libraopen.lib.virginia.edu/downloads/6t053g00z) and includes implementations of Merill and Garland's [Chained Scan with Decoupled Lookback](https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back), which is how we are able to reach speeds approaching `MemCopy()`. Finally, this project was written in HLSL for compute shaders, though with reasonable knowledge of GPU programming it is easily portable. 
 
@@ -984,18 +984,62 @@ Once the preceeding tile aggregate has been found, the value is broadcast to the
 </details>
 
 # Testing Methodology
-Performance testing in the Unity HLSL environment is challenging because, to the best of my knowledge, there is no way to directly time the execution of kernels in situ on GPU's. Neither is there a way to directly time the execution of a kernel in host CPU code. Instead we make do by making an [`AsyncGPUReadback.Request`](https://docs.unity3d.com/ScriptReference/Rendering.AsyncGPUReadback.html), which essentially waits until the GPU signals that is finished working on a buffer, then reads the entire buffer back from GPU memory to CPU memory. Although this does accurately time the execution of the kernel, the resulting time it produces also includes the time taken to readback the buffer. Given that, operating at the theoretical maximum speed, it takes it should take a 2080 Super just ~0.004 seconds to process a $2^{28}$ input, whereas experimental testing has shown that the time taken to readback the buffer is about ~.678 seconds, this is quite an issue. For more on the readback times I highly recommend MJP's blog [post](https://therealmjp.github.io/posts/gpu-memory-pool/). 
+Performance testing in the Unity HLSL environment is challenging because, to the best of my knowledge, there is no way to directly time the execution of kernels in situ on GPU's. Instead we make do by making an [`AsyncGPUReadback.Request`](https://docs.unity3d.com/ScriptReference/Rendering.AsyncGPUReadback.html), which essentially waits until the GPU signals that is finished working on a buffer, then reads the entire buffer back from GPU memory to CPU memory. Typically a GPU to CPU readback operation [introduces adds a large amount of latency to the timing](https://therealmjp.github.io/posts/gpu-memory-pool/), so we create a single element dummy buffer, `b_timing`, whose small size renders this readback latency irrelevant. 
 
-To overcome this, we make an alternate version of each scan, that we can loop a fixed number of times. By holding the size of the input and thus the readback time fixed, we can determine the execution time of the algorithm indepdent of the readback. All of our testing was performed in the Unity editor, with the camera disabled. We collected samples in batches of 500 at each number of loop iterations, discarding the first sample from each batch in order to prep the TLB. With the exception of the naive prefix sum, all tests were peformed at: 1, 5, 10, 15, and 20 loops. Unity has a somewhat aggressive halting policy when it comes to shaders, and appears to crash when the execution of a shader exceeds about ~2.5 seconds, which precluded testing of a larger number of loops with the naive prefix sum. The results for each of the scans in the histograms depicted at the top of the page is as follows:
+Although this does accurately time the execution of the kernel, there is another issue: Unity limits the size of buffers to 2^28 elements, which experimental testing of a simple `MemCpy` kernel indicates is insufficient to fully utilize the memory bandwidth. Running the following kernel at `k = 1` (a single iteration of the inner loop) and an input size of 2^28, we achieve a harmonic mean performance of ~37.8 G 32-bit elements/sec. Although it is well known that graphics cards rarely achieve the speed listed by the manufacturer, given that our 2080 Super has a listed memory bandwidth of 496 GB/sec, this is far short of the theoretical maximum `MemCpy` speed of ~62 G 32-bit elements/sec. 
+<br>
+<br>
+```HLSL
+extern int e_size;
+extern int e_repeats;
+RWBuffer<uint4> bufferA;
+RWBuffer<uint4> bufferB;
+RWBuffer<uint> timingBuffer;
 
-![Naive Implementation of Blelloch's Algorithm](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9a6553d3-afd5-4ef6-b123-c820894378f4)
+[numthreads(GROUP_SIZE, 1, 1)]
+void MemCpy(int3 id : SV_DispatchThreadID)
+{
+    const uint inc = GROUP_SIZE * THREAD_BLOCKS;
+    const uint vecSize = e_size >> 2;
+    const uint repeats = e_repeats;
+    
+    for (int k = 0; k < repeats; ++k)
+    {
+        for (int i = id.x; i < vecSize; i += inc)
+            bufferA[i] = bufferB[i];
+    }
+    
+    //to time the kernel execution
+    if (id.x == 0)
+        timingBuffer[id.x] = id.x;
+}
+```
+<br>
+We can confirm that the input size *is* affecting the speed of the `MemCpy` by increasing `k`, effectively running the `MemCpy` at input sizes of `k` * 2^28. Indeed, running 1000 tests at each `k` from 1 to 40, we get the following result:
+<br>
+<br>
+<br>
 
-![Single Threadblock Warp Sized Radix Raking Reduce Scan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/473fafce-0b7b-443f-b4d4-999160e31095)
+![MemCpy Timing at k Loop Repititions](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/82ba7705-39de-4705-9c08-8b4468d10c8a)
+<br>
+<br>
 
-![Device Level Vectorized Reduce then Scan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/83ded377-97c3-4693-938d-f150a82d0bb8)
+This reveals two things:
 
-![Vectorized Chained Scan With Decoupled Lookback](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f71853e7-5886-468d-ae61-792f313af5bd)
++ At larger `k`,  the `MemCpy` reaches speeds of up to ~48.8 G 32-bit ele/sec, which is further confirmed by the slope of the best fit line, which indicates a speed of 49.1 G 32-bit ele/sec. 
 
++ As indicated by the intercept of our best fit line, there appears to be some residual latency introduced by the CPU side timing.
+## 
+
+Because *Chained Scan with Decoupled Lookback* has the sorting-network-like quality that it performs the same amount of work regardless of the input, we can use the same looping approach as we did with `MemCpy`. Testing our *Chained Scan with Decoupled Lookback* implementation, we get an almost identical result, reaching a harmonic mean performance of ~38.3 G 32-bit ele/sec at `k = 1`. Performing the same testing as we did with the `MemCpy` we get the following result:
+<br>
+<br>
+
+![Chained Scan With Decoupled Lookback Speed at k Loop Repititions](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3443466f-4a24-4801-b11d-414abb6af5f7)
+
+Showing that our implementation achieves a speed of ~54.1 G 32-bit ele/sec, or a memory bandwidth utilization of about ~87%. This falls in line almost perfectly with the results achieved in the original paper, where a bandwidth utilization of ~85% was achieved on an Nvidia Tesla M40. Although our result is seemingly higher than the `MemCpy`, this is almost certainly due to the fact that our *Chained Scan with Decoupled Lookback* implementation reads and writes several runs of elements at a time, instead of reading and immediately writing as in our `MemCpy`, thus allowing the SM's to better hide memory latency.
+
+To test the timings on your own computer, I have included the timing version of *Chained Scan with Decoupled Lookback* as well as the `MemCpy` kernel in the folder `TimingPrefixSums`.
 # Interesting Reading and Bibliography
 
 Duane Merrill and Michael Garland. “Single-pass Parallel Prefix Scan with De-coupled Lookback”. In: 2016. 
