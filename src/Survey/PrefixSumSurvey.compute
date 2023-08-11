@@ -48,7 +48,7 @@ groupshared uint g_reduceValues[SHARED_MEMORY_SIZE];
 [numthreads(GROUP_SIZE, 1, 1)]
 void Init(int3 id : SV_DispatchThreadID)
 {
-    for (int i = id.x; i < e_size; i += GROUP_SIZE * 32)
+    for (int i = id.x; i < e_size; i += GROUP_SIZE * 256)
         prefixSumBuffer[i] = 1;
 }
 

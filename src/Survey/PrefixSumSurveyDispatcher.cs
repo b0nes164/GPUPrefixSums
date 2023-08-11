@@ -4,14 +4,14 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class PrefixSumSurveyDispatcher : ScanBase
+public class PrefixSumSurveyDispatcher : MonoBehaviour
 {
     protected enum TestType
     {
         //Checks to see if the prefix sum is valid.
         //If validationText is enabled, EVERY index that does not match the correct sum will be printed.
         //However, this will be extremely slow for 32k + errors, so text not advised for large sums.
-        ValidateSum,
+        ValidatePrefixSum,
 
         //For all other validations, the initial buffer is filled with the value 1.
         //This is because the maximum aggregate value of the prefix sum is 2^30, and
@@ -21,17 +21,6 @@ public class PrefixSumSurveyDispatcher : ScanBase
 
         //Prints out the entire contents of the prefix sum buffer. Not suggested at large sizes due to lag.
         Debug,
-
-        //Test a specific buffer size using the "SpecificSize" field. 
-        DebugAtSize,
-
-        //Runs the sum for the desired number of iterations, and prints out the speed of the sum.
-        //Note, this is *NOT* the true time of the algorithm because it includes the readback time.
-        //This is purely for relative measurement of different algorithms. Read the testing methodology for more information.
-        TimingTest,
-
-        //Records the raw timing data in a csv file.
-        RecordTimingData,
 
         //Validates for every power of 2 in the given range.
         ValidatePowersOfTwo,
@@ -67,9 +56,8 @@ public class PrefixSumSurveyDispatcher : ScanBase
         RadixSklanskyAdvanced
     }
 
-    private int[] maxSizes = new int[20] 
-        { 10, 5, 5, 10, 10, 10, 10, 10, 10, 10,
-          10, 10, 20, 25, 25, 18, 25, 25, 25, 25 };
+    [SerializeField]
+    private ComputeShader compute;
 
     [SerializeField]
     private ScanType scanType;
@@ -80,14 +68,31 @@ public class PrefixSumSurveyDispatcher : ScanBase
     [Range(minSlider, maxSlider)]
     public int sizeExponent;
 
+    [SerializeField]
+    private bool printValidationText;
+
+    [SerializeField]
+    private bool quickText;
+
+
+    private int[] maxSizes = new int[20] 
+        { 10, 5, 5, 10, 10, 10, 10, 10, 10, 10,
+          10, 10, 20, 25, 25, 18, 25, 25, 25, 25 };
+
     private const int minSlider = 5;
     private const int maxSlider = 25;
 
     private const string computeShaderString = "PrefixSumSurvey";
     private const int k_init = 0;
 
-    protected int k_scan;
-    protected int greatestKernelIndex;
+    private int k_scan;
+    private int size;
+    private bool breaker;
+    private int validationCount;
+    private int greatestKernelIndex;
+    private uint[] validationArray;
+
+    private ComputeBuffer prefixSumBuffer;
 
     void Start()
     {
@@ -126,13 +131,13 @@ public class PrefixSumSurveyDispatcher : ScanBase
         }
     }
 
-    public override void UpdateSize(int _size)
+    public void UpdateSize(int _size)
     {
         compute.SetInt("e_size", _size);
         UpdatePrefixBuffer(_size);
     }
 
-    public override void UpdatePrefixBuffer(int _size)
+    public void UpdatePrefixBuffer(int _size)
     {
         if (prefixSumBuffer != null)
             prefixSumBuffer.Dispose();
@@ -141,17 +146,17 @@ public class PrefixSumSurveyDispatcher : ScanBase
             compute.SetBuffer(i, "prefixSumBuffer", prefixSumBuffer);
     }
 
-    public override void ResetBuffers()
+    public void ResetBuffers()
     {
-        compute.Dispatch(k_init, 32, 1, 1);
+        compute.Dispatch(k_init, 256, 1, 1);
     }
 
-    public override void DispatchKernels()
+    public void DispatchKernels()
     {
         compute.Dispatch(k_scan, 1, 1, 1);
     }
 
-    public override void CheckShader()
+    public void CheckShader()
     {
         try
         {
@@ -179,23 +184,17 @@ public class PrefixSumSurveyDispatcher : ScanBase
 
             switch (testType)
             {
-                case TestType.ValidateSum:
-                    StartCoroutine(ValidateSum());
+                case TestType.ValidatePrefixSum:
+                    StartCoroutine(ValidatePrefixSum(scanType));
+                    break;
+                case TestType.ValidatePowersOfTwo:
+                    StartCoroutine(ValidatePowersOfTwo(minSlider, maxSizes[(int)scanType], scanType.ToString(), true));
                     break;
                 case TestType.ValidateSumMonotonic:
                     StartCoroutine(ValidateSumMonotonic(maxSizes[(int)scanType], scanType.ToString()));
                     break;
                 case TestType.Debug:
                     DebugText();
-                    break;
-                case TestType.TimingTest:
-                    StartCoroutine(TimingRoutine());
-                    break;
-                case TestType.RecordTimingData:
-                    StartCoroutine(RecordTimingData(scanType.ToString(), "", ""));
-                    break;
-                case TestType.ValidatePowersOfTwo:
-                    StartCoroutine(ValidatePowersOfTwo(minSlider, maxSizes[(int)scanType], scanType.ToString(), false));
                     break;
                 case TestType.ValidateMonotonicAllScans:
                     StartCoroutine(ValidateMonotonicAllScans());
@@ -214,9 +213,39 @@ public class PrefixSumSurveyDispatcher : ScanBase
         
     }
 
-    public virtual void ResetBuffersMonotonic(ref uint[] temp)
+    private IEnumerator ValidatePrefixSum(ScanType scan)
     {
-        prefixSumBuffer.SetData(temp);
+        breaker = false;
+
+        validationArray = new uint[Mathf.CeilToInt(size / 4.0f) * 4];
+        DispatchKernels();
+        prefixSumBuffer.GetData(validationArray);
+        yield return new WaitForSeconds(.1f);   //To prevent unity from crashig
+        if (printValidationText ? ValWithText(size) : Validate(size))
+            Debug.Log(scan.ToString() + " Passed");
+        else
+            Debug.LogError("Sum Failed at size: " + size);
+
+        breaker = true;
+    }
+
+    private IEnumerator ValidatePowersOfTwo(int _min, int _max, string kernelString, bool beginningText)
+    {
+        breaker = false;
+        if(beginningText)
+            Debug.Log("BEGINNING VALIDATE POWERS OF TWO.");
+
+        validationCount = 0;
+        for (int s = minSlider; s <= _max; ++s)
+            yield return TestAtSize(1 << s, kernelString);
+
+        if (validationCount == _max + 1 - _min)
+            Debug.Log(kernelString + " [" + validationCount + "/" + (_max + 1 - _min) + "] ALL TESTS PASSED");
+        else
+            Debug.Log(kernelString + " FAILED. [" + validationCount + "/" + (_max + 1 - _min) + "] PASSED");
+
+        UpdateSize(size);
+        breaker = true;
     }
 
     public virtual IEnumerator ValidateSumMonotonic(int max, string kernelString)
@@ -230,42 +259,37 @@ public class PrefixSumSurveyDispatcher : ScanBase
         for (uint i = 0; i < temp.Length; ++i)
             temp[i] = i;
         UpdateSize(tempSize);
-        ResetBuffersMonotonic(ref temp);
-        for (int j = 0; j < kernelIterations; ++j)
+        prefixSumBuffer.SetData(temp);
+        yield return new WaitForSeconds(.1f);  //To prevent unity from crashing
+
+        DispatchKernels();
+        prefixSumBuffer.GetData(validationArray);
+        int errCount = 0;
+        uint total = 0;
+        for (uint i = 1; i < tempSize; ++i)
         {
-            DispatchKernels();
-            prefixSumBuffer.GetData(validationArray);
-            int errCount = 0;
-            uint total = 0;
-            for (uint i = 1; i < tempSize; ++i)
+            total += i;
+            if (validationArray[i] != total)
             {
-                total += i;
-                if (validationArray[i] != total)
+                validated = false;
+                if (printValidationText)
                 {
-                    validated = false;
-                    if (validateText)
+                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + total + ", " + validationArray[i]);
+                    if (quickText)
                     {
-                        Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + total + ", " + validationArray[i]);
-                        if (quickText)
-                        {
-                            errCount++;
-                            if (errCount > 1024)
-                                break;
-                        }
+                        errCount++;
+                        if (errCount > 1024)
+                            break;
                     }
                 }
             }
-            if (validated)
-                ResetBuffersMonotonic(ref temp);
-            else
-                break;
-            yield return new WaitForSeconds(.25f);  //To prevent unity from crashing
         }
-
+        
         if (validated)
             Debug.Log("Prefix Sum Monotonic " + kernelString + ": passed");
         else
             Debug.LogError("Prefix Sum Monotonic " + kernelString + ": failed");
+
         UpdateSize(size);
 
         breaker = true;
@@ -302,6 +326,55 @@ public class PrefixSumSurveyDispatcher : ScanBase
         }
         k_scan = compute.FindKernel(scanType.ToString());
         Debug.Log("Test complete.");
+    }
+
+    private IEnumerator TestAtSize(int _size, string kernelString)
+    {
+        UpdateSize(_size);
+        ResetBuffers();
+        DispatchKernels();
+        yield return new WaitForSeconds(.1f);  //To prevent unity from crashing
+        validationArray = new uint[Mathf.CeilToInt(_size / 4.0f) * 4];
+        prefixSumBuffer.GetData(validationArray);
+        if (printValidationText ? ValWithText(_size) : Validate(_size))
+            validationCount++;
+        else
+            Debug.LogError(kernelString + " FAILED AT SIZE: " + _size);
+    }
+
+    private bool Validate(int _size)
+    {
+        for (uint i = 0; i < _size; ++i)
+        {
+            if (validationArray[i] != (i + 1))
+                return false;
+        }
+        return true;
+    }
+
+    private bool ValWithText(int _size)
+    {
+        bool isValidated = true;
+        int errCount = 0;
+        for (uint i = 0; i < _size; ++i)
+        {
+            if (validationArray[i] != (i + 1))
+            {
+                isValidated = false;
+                if (printValidationText)
+                {
+                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + (i + 1) + ", " + validationArray[i]);
+                    if (quickText)
+                    {
+                        errCount++;
+                        if (errCount > 1024)
+                            break;
+                    }
+                }
+            }
+        }
+
+        return isValidated;
     }
     private void OnDestroy()
     {
