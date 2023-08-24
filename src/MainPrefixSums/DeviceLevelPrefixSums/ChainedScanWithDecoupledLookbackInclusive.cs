@@ -71,7 +71,6 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     ChainedScanWithDecoupledLookbackInclusive()
     {
         partitionSize = 8192;
-        threadBlocks = 256;
         computeShaderString = "ChainedDecoupledInclusive";
     }
 
@@ -159,6 +158,7 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
     private void UpdateSize(int _size)
     {
+        threadBlocks = _size / partitionSize + 1;
         compute.SetInt("e_size", _size);
         UpdatePrefixBuffer(_size);
         UpdateStateBuffer(_size);
@@ -178,7 +178,7 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     {
         if (stateBuffer != null)
             stateBuffer.Dispose();
-        stateBuffer = new ComputeBuffer(_size / partitionSize, sizeof(uint));
+        stateBuffer = new ComputeBuffer(_size / partitionSize + 1, sizeof(uint));
         compute.SetBuffer(k_init, "b_state", stateBuffer);
         compute.SetBuffer(k_scan, "b_state", stateBuffer);
     }
@@ -198,7 +198,7 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
     private void ResetBuffers()
     {
-        compute.Dispatch(k_init, threadBlocks, 1, 1);
+        compute.Dispatch(k_init, 256, 1, 1);
     }
 
     private void DispatchKernels()
