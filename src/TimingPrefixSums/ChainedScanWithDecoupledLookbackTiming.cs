@@ -69,7 +69,7 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
     ChainedScanWithDecoupledLookbackTiming()
     {
         partitionSize = 8192;
-        threadBlocks = 256;
+        threadBlocks = 2048;
         computeShaderString = "ChainedDecoupledScanTiming";
     }
 
@@ -160,7 +160,7 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
     {
         compute.SetInt("e_size", _size);
         UpdatePrefixBuffer(_size);
-        UpdateStateBuffer(_size);
+        UpdateStateBuffer(_size, reps);
     }
 
     private void UpdateRepeats(int _repeats)
@@ -179,20 +179,11 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
         compute.SetBuffer(k_scan, "b_prefixSum", prefixSumBuffer);
     }
 
-    private void UpdateStateBuffer(int _size)
-    {
-        if (stateBuffer != null)
-            stateBuffer.Dispose();
-        stateBuffer = new ComputeBuffer(_size / partitionSize, sizeof(uint));
-        compute.SetBuffer(k_init, "b_state", stateBuffer);
-        compute.SetBuffer(k_scan, "b_state", stateBuffer);
-    }
-
     private void UpdateStateBuffer(int _size, int _repeats)
     {
         if (stateBuffer != null)
             stateBuffer.Dispose();
-        stateBuffer = new ComputeBuffer(_size / partitionSize * _repeats, sizeof(uint));
+        stateBuffer = new ComputeBuffer(_size / partitionSize * _repeats + 1, sizeof(uint));
         compute.SetBuffer(k_init, "b_state", stateBuffer);
         compute.SetBuffer(k_scan, "b_state", stateBuffer);
     }
@@ -213,7 +204,7 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
 
     private void ResetBuffers()
     {
-        compute.Dispatch(k_init, threadBlocks, 1, 1);
+        compute.Dispatch(k_init, 256, 1, 1);
     }
 
     private void DispatchKernels()
