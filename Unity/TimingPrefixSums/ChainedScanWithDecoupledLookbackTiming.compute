@@ -42,44 +42,30 @@
 
 #define PARTITION_SIZE      8192
 #define PART_VEC_SIZE       2048
-#define PART_VEC_MASK       2047
 #define GROUP_SIZE          512
-#define PART_LOG            13
-#define PART_VEC_LOG        11
 
 #define VECTOR_MASK         3
 #define VECTOR_LOG          2
-
-#define LANE_COUNT          32  // <---------------------------   For Nvidia; change depending on hardware
-#define LANE_MASK           31
-#define LANE_LOG            5
-#define WAVES_PER_GROUP     16
-#define WAVE_PARTITION_SIZE 128
-#define WAVE_PART_LOG       7
-
-//#define LANE_COUNT            64 <-------------------------   AMD 
-//#define LANE_MASK             63
-//#define LANE_LOG              6    
-//#define WAVES_PER_GROUP       8
-//#define WAVE_PARTITION_SIZE   256
-//#define WAVE_PART_LOG         8
 
 #define FLAG_NOT_READY  0
 #define FLAG_AGGREGATE  1
 #define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
-#define LANE            gtid.x
-#define WAVE_INDEX      gtid.y
-#define SPINE_INDEX     (((gtid.x + 1) << WAVE_PART_LOG) - 1)
-#define PARTITIONS      (e_size >> PART_LOG)
-#define WAVE_PART_START (WAVE_INDEX << WAVE_PART_LOG)
-#define PARTITION_START (partitionIndex << PART_VEC_LOG)
+#define PARTITIONS          ((e_size >> 13) + ((e_size & 8191) ? 1 : 0))            //hack divroundup
+#define WAVE_INDEX          (gtid.x / WaveGetLaneCount())
+#define WAVE_PART_SIZE      (PART_VEC_SIZE / GROUP_SIZE * WaveGetLaneCount())
+#define WAVE_PART_START     (WAVE_INDEX * WAVE_PART_SIZE)
+#define PARTITION_START     (partitionIndex * PART_VEC_SIZE)
+#define WAVES_PER_GROUP     (GROUP_SIZE / WaveGetLaneCount())
+#define IS_FIRST_WAVE       (gtid.x < WaveGetLaneCount())
+#define IS_NOT_FIRST_WAVE   (gtid.x >= WaveGetLaneCount())
+#define SPINE_INDEX         (((gtid.x + 1) * WAVE_PART_SIZE) - 1)
 
 //for the timing kernel, for input size of 2^28 only!
 #define T_PART_INDEX    (partitionIndex & 32767)
 #define T_PARTITIONS    (PARTITIONS * e_repeats)
-#define T_PART_START    (T_PART_INDEX << PART_VEC_LOG)
+#define T_PART_START    (T_PART_INDEX * PART_VEC_SIZE)
 
 extern int e_size;
 extern int e_repeats;
@@ -93,16 +79,16 @@ RWBuffer<uint> b_timing;
 
 groupshared uint4 g_sharedMem[PART_VEC_SIZE];
 
-[numthreads(512, 1, 1)]
+[numthreads(GROUP_SIZE, 1, 1)]
 void Init(int3 id : SV_DispatchThreadID)
 {
     if (id.x == 0)
         b_index[id.x] = 0;
     
-    for (int i = id.x; i < e_size; i += 512 * 256)
+    for (int i = id.x; i < e_size; i += GROUP_SIZE * 256)
         b_prefixLoad[i] = 1;
     
-    for (int i = id.x; i <= T_PARTITIONS; i += 512 * 256)
+    for (int i = id.x; i <= T_PARTITIONS; i += GROUP_SIZE * 256)
         b_state[i] = 0;
     
     if (id.x == 0)
@@ -116,14 +102,14 @@ void Init(int3 id : SV_DispatchThreadID)
  * fixed number of threadblocks. As the occupancy duing the scan remains the same,
  * this should still approximate the performance of our implementation.
  ******************************************************************************/
-[numthreads(LANE_COUNT, WAVES_PER_GROUP, 1)]
+[numthreads(GROUP_SIZE, 1, 1)]
 void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_GroupID)
 {
     int partitionIndex;
     do
     {
         //Acquire the partition index
-        if (WAVE_INDEX == 0 && LANE == 0)
+        if (WAVE_INDEX == 0 && WaveGetLaneIndex() == 0)
             InterlockedAdd(b_index[0], 1, g_sharedMem[0].x);
         GroupMemoryBarrierWithGroupSync();
         partitionIndex = WaveReadLaneAt(g_sharedMem[0].x, 0);
@@ -132,7 +118,7 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             break;
         
         const int partSize = partitionIndex == T_PARTITIONS ? (e_size >> VECTOR_LOG) + (e_size & VECTOR_MASK ? 1 : 0) - PARTITION_START : PART_VEC_SIZE;
-        int i = LANE + WAVE_PART_START;
+        int i = WaveGetLaneIndex() + WAVE_PART_START;
         if (i < partSize)
         {
             g_sharedMem[i] = b_prefixSum[i + T_PART_START];
@@ -142,7 +128,7 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             g_sharedMem[i] += WavePrefixSum(g_sharedMem[i].w);
         }
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
         {
             g_sharedMem[i] = b_prefixSum[i + T_PART_START];
@@ -152,7 +138,7 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             g_sharedMem[i] += WavePrefixSum(g_sharedMem[i].w) + WaveReadLaneAt(g_sharedMem[i - 1].w, 0);
         }
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
         {
             g_sharedMem[i] = b_prefixSum[i + T_PART_START];
@@ -162,7 +148,7 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             g_sharedMem[i] += WavePrefixSum(g_sharedMem[i].w) + WaveReadLaneAt(g_sharedMem[i - 1].w, 0);
         }
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
         {
             g_sharedMem[i] = b_prefixSum[i + T_PART_START];
@@ -173,17 +159,17 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
         }
         GroupMemoryBarrierWithGroupSync();
         
-        if (WAVE_INDEX == 0 && LANE < WAVES_PER_GROUP)
+        if (WAVE_INDEX == 0 && WaveGetLaneIndex() < WAVES_PER_GROUP)
             g_sharedMem[SPINE_INDEX] += WavePrefixSum(g_sharedMem[SPINE_INDEX].w);
         GroupMemoryBarrierWithGroupSync();
             
         //Set flag payload
-        if (WAVE_INDEX == 0 && LANE == 0)
+        if (WAVE_INDEX == 0 && WaveGetLaneIndex() == 0)
         {
             if (partitionIndex == 0)
-                InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PART_VEC_MASK].w << 2));
+                InterlockedOr(b_state[partitionIndex], FLAG_INCLUSIVE ^ (g_sharedMem[PART_VEC_SIZE - 1].w << 2));
             else
-                InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PART_VEC_MASK].w << 2));
+                InterlockedOr(b_state[partitionIndex], FLAG_AGGREGATE ^ (g_sharedMem[PART_VEC_SIZE - 1].w << 2));
         }
             
         uint aggregate = 0;
@@ -191,15 +177,15 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
         {
             if (WAVE_INDEX == 0)
             {
-                for (int k = partitionIndex - LANE - 1; 0 <= k;)
+                for (int k = partitionIndex - WaveGetLaneIndex() - 1; 0 <= k;)
                 {
                     uint flagPayload = b_state[k];
-                    const int inclusiveIndex = WaveActiveMin(LANE + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? LANE_COUNT : 0));
-                    const int gapIndex = WaveActiveMin(LANE + LANE_COUNT - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? LANE_COUNT : 0));
+                    const int inclusiveIndex = WaveActiveMin(WaveGetLaneIndex() + WaveGetLaneCount() - ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE ? WaveGetLaneCount() : 0));
+                    const int gapIndex = WaveActiveMin(WaveGetLaneIndex() + WaveGetLaneCount() - ((flagPayload & FLAG_MASK) == FLAG_NOT_READY ? WaveGetLaneCount() : 0));
                     if (inclusiveIndex < gapIndex)
                     {
-                        aggregate += WaveActiveSum(LANE <= inclusiveIndex ? (flagPayload >> 2) : 0);
-                        if (LANE == 0)
+                        aggregate += WaveActiveSum(WaveGetLaneIndex() <= inclusiveIndex ? (flagPayload >> 2) : 0);
+                        if (WaveGetLaneIndex() == 0)
                         {
                             const uint t = aggregate;
                             InterlockedAdd(b_state[partitionIndex], 1 | aggregate << 2);
@@ -210,15 +196,15 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
                     }
                     else
                     {
-                        if (gapIndex < LANE_COUNT)
+                        if (gapIndex < WaveGetLaneCount())
                         {
-                            aggregate += WaveActiveSum(LANE < gapIndex ? (flagPayload >> 2) : 0);
+                            aggregate += WaveActiveSum(WaveGetLaneIndex() < gapIndex ? (flagPayload >> 2) : 0);
                             k -= gapIndex;
                         }
                         else
                         {
                             aggregate += WaveActiveSum(flagPayload >> 2);
-                            k -= LANE_COUNT;
+                            k -= WaveGetLaneCount();
                         }
                     }
                 }
@@ -226,11 +212,11 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             GroupMemoryBarrierWithGroupSync();
             
             //propogate aggregate values
-            if (WAVE_INDEX || LANE)
+            if (WAVE_INDEX || WaveGetLaneIndex())
                 aggregate = WaveReadLaneAt(g_sharedMem[0].x, 1);
             GroupMemoryBarrierWithGroupSync();
                 
-            if (WAVE_INDEX == 0 && LANE == 0)
+            if (WAVE_INDEX == 0 && WaveGetLaneIndex() == 0)
             {
                 g_sharedMem[0].x = aggregate - g_sharedMem[0].x;
                 aggregate -= g_sharedMem[0].x;
@@ -238,26 +224,26 @@ void ChainedDecoupledScanTiming(int3 gtid : SV_GroupThreadID, int3 gid : SV_Grou
             GroupMemoryBarrierWithGroupSync();
         }
             
-        i = LANE + WAVE_PART_START;
+        i = WaveGetLaneIndex() + WAVE_PART_START;
         const uint prev = (WAVE_INDEX ? WaveReadLaneAt(g_sharedMem[i - 1].w, 0) : 0) + aggregate;
         if (i < partSize)
             b_prefixSum[i + T_PART_START] = g_sharedMem[i] + prev;
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
             b_prefixSum[i + T_PART_START] = g_sharedMem[i] + prev;
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
             b_prefixSum[i + T_PART_START] = g_sharedMem[i] + prev;
             
-        i += LANE_COUNT;
+        i += WaveGetLaneCount();
         if (i < partSize)
-            b_prefixSum[i + T_PART_START] = g_sharedMem[i] + (LANE != LANE_MASK ? prev : aggregate);
+            b_prefixSum[i + T_PART_START] = g_sharedMem[i] + (WaveGetLaneIndex() + 1 != WaveGetLaneCount() ? prev : aggregate);
         
     } while (true);
     
     //for timing the buffer
-    if (WAVE_INDEX == 0 && LANE == 0)
+    if (WAVE_INDEX == 0 && WaveGetLaneIndex() == 0)
         b_timing[gid.x] = 0;
 }

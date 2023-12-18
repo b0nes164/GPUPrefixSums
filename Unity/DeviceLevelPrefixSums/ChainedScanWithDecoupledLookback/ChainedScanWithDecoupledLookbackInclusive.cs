@@ -8,15 +8,13 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     private enum TestType
     {
         //Checks to see if the prefix sum is valid.
-        //If validationText is enabled, EVERY index that does not match the correct sum will be printed.
-        //It is recommended to enable quick text which will limit the number errors printed to 1024,
-        //because printing many errors can be quite slow.
         ValidatePrefixSum,
 
         //Validates prefix sum on an input of random numbers instead of the default of input of all elements initialized to one.
+        //Tends to be slower because validation is performed on the CPU instead of GPU
         ValidatePrefixSumRandom,
 
-        //Prints 
+        //Prints out the prefix sum, gets slow very fast for large inputs
         DebugPrefixSum,
 
         //Prints the values of the state and index buffer. Use to ensure that the lookback is functioning properly.
@@ -41,20 +39,14 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     [Range(minSize, maxSize)]
     public int inputSize;
 
-    [SerializeField]
-    private bool printValidationText;
-
-    [SerializeField]
-    private bool quickText;
-
-    private const int minSize = 8192;
+    private const int minSize = 8191;
     private const int maxSize = 268435456;
 
     private const int k_init = 0;
     private int k_scan;
+    private const int k_validate = 2;
 
     private int size;
-    private int validationCount;
     private bool breaker;
 
     private ComputeBuffer prefixSumBuffer;
@@ -62,17 +54,8 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     private ComputeBuffer timingBuffer;
     private ComputeBuffer indexBuffer;
 
-    private int partitionSize;
-    private int threadBlocks;
-    private string computeShaderString;
-
-    private uint[] validationArray;
-
-    ChainedScanWithDecoupledLookbackInclusive()
-    {
-        partitionSize = 8192;
-        computeShaderString = "ChainedDecoupledInclusive";
-    }
+    private const int partitionSize = 8192;
+    private const string computeShaderString = "ChainedDecoupledInclusive";
 
     private void Start()
     {
@@ -143,6 +126,7 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
     private void CheckShader()
     {
+        //scan kernel functions as identifier for compute shader
         try
         {
             k_scan = compute.FindKernel(computeShaderString);
@@ -158,7 +142,6 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
     private void UpdateSize(int _size)
     {
-        threadBlocks = _size / partitionSize + 1;
         compute.SetInt("e_size", _size);
         UpdatePrefixBuffer(_size);
         UpdateStateBuffer(_size);
@@ -169,16 +152,17 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
         if (prefixSumBuffer != null)
             prefixSumBuffer.Dispose();
 
-        prefixSumBuffer = new ComputeBuffer(Mathf.CeilToInt(_size / 4.0f), sizeof(uint) * 4);
+        prefixSumBuffer = new ComputeBuffer(divRoundUp(_size, 4), sizeof(uint) * 4);
         compute.SetBuffer(k_init, "b_prefixLoad", prefixSumBuffer);
         compute.SetBuffer(k_scan, "b_prefixSum", prefixSumBuffer);
+        compute.SetBuffer(k_validate, "b_prefixSum", prefixSumBuffer);
     }
 
     private void UpdateStateBuffer(int _size)
     {
         if (stateBuffer != null)
             stateBuffer.Dispose();
-        stateBuffer = new ComputeBuffer(_size / partitionSize + 1, sizeof(uint));
+        stateBuffer = new ComputeBuffer(divRoundUp(_size, partitionSize), sizeof(uint));
         compute.SetBuffer(k_init, "b_state", stateBuffer);
         compute.SetBuffer(k_scan, "b_state", stateBuffer);
     }
@@ -201,23 +185,20 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
         compute.Dispatch(k_init, 256, 1, 1);
     }
 
-    private void DispatchKernels()
+    private void DispatchKernels(int _size)
     {
-        compute.Dispatch(k_scan, threadBlocks, 1, 1);
+        compute.Dispatch(k_scan, divRoundUp(_size, partitionSize), 1, 1);
     }
 
     private IEnumerator ValidatePrefixSum()
     {
         breaker = false;
 
-        validationArray = new uint[Mathf.CeilToInt(size / 4.0f) * 4];
-        DispatchKernels();
-        prefixSumBuffer.GetData(validationArray);
-        yield return new WaitForSeconds(.1f);   //To prevent unity from crashig
-        if (printValidationText ? ValWithText(size) : Validate(size))
-            Debug.Log("Sum Passed");
+        if (TestAtSizeIndirect(size))
+            Debug.Log("Test passed at size " + size);
         else
-            Debug.LogError("Sum Failed at size: " + size);
+            Debug.LogError("Test failed at size " + size);
+        yield return new WaitForSeconds(.1f);   //To prevent unity from crashing when reading back data GPU -> CPU
 
         breaker = true;
     }
@@ -228,15 +209,14 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
         //intialize the buffer to random values
         System.Random rand = new System.Random((int)(Time.realtimeSinceStartup * 1000000.0f));
-        uint[] temp = new uint[Mathf.CeilToInt(size / 4.0f) * 4];
-        int max = (1 << 30) / temp.Length;
-        for (uint i = 0; i < temp.Length; ++i)
-            temp[i] = (uint)rand.Next(1, max);
+        uint[] temp = new uint[prefixSumBuffer.count * 4];
+        for (int i = 0; i < temp.Length; ++i)
+            temp[i] = (uint)rand.Next(1, 2);
         prefixSumBuffer.SetData(temp);
 
         bool isValidated = true;
-        validationArray = new uint[temp.Length];
-        DispatchKernels();
+        uint[] validationArray = new uint[temp.Length];
+        DispatchKernels(size);
         prefixSumBuffer.GetData(validationArray);
         int errCount = 0;
         uint total = 0;
@@ -248,16 +228,11 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
             if (validationArray[i] != total)
             {
                 isValidated = false;
-                if (printValidationText)
-                {
-                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + total + ", " + validationArray[i]);
-                    if (quickText)
-                    {
-                        errCount++;
-                        if (errCount > 1024)
-                            break;
-                    }
-                }
+                Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + total + ", " + validationArray[i]);
+
+                errCount++;
+                if (errCount > 1024)
+                    break;
             }
         }
         yield return new WaitForSeconds(.1f);
@@ -266,7 +241,6 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
             Debug.Log("Prefix Sum Random passed");
         else
             Debug.LogError("Prefix Sum Random failed");
-        UpdateSize(size);
 
         breaker = true;
     }
@@ -275,14 +249,16 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     {
         breaker = false;
 
-        validationArray = new uint[Mathf.CeilToInt(size / 4.0f) * 4];
-        DispatchKernels();
-        prefixSumBuffer.GetData(validationArray);
-        yield return new WaitForSeconds(.1f);   //To prevent unity from crashing
+        uint[] outputArr = new uint[prefixSumBuffer.count * 4];
 
-        int limit = quickText ? 1024 : size;
-        for (int i = 0; i < limit; ++i)
-            Debug.Log(validationArray[i]);
+        DispatchKernels(size);
+        prefixSumBuffer.GetData(outputArr);
+
+        Debug.Log("---------------PREFIX VALUES---------------");
+        for (int i = 0; i < size; ++i)
+            Debug.Log(i + ": " + outputArr[i]);
+
+        yield return new WaitForSeconds(.1f);
 
         breaker = true;
     }
@@ -291,16 +267,16 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
     {
         breaker = false;
 
-        validationArray = new uint[stateBuffer.count];
+        uint[] outputArray = new uint[stateBuffer.count];
         uint[] tempArray = new uint[1];
 
-        DispatchKernels();
-        stateBuffer.GetData(validationArray);
+        DispatchKernels(size);
+        stateBuffer.GetData(outputArray);
         indexBuffer.GetData(tempArray);
 
         Debug.Log("---------------STATE VALUES---------------");
-        for (int i = 0; i < validationArray.Length; ++i)
-            Debug.Log(i + ": " + (validationArray[i] >> 2));
+        for (int i = 0; i < outputArray.Length; ++i)
+            Debug.Log(i + ": " + (outputArray[i] >> 2));
 
         Debug.Log("---------------INDEX VALUE----------------");
         Debug.Log(tempArray[0]);
@@ -319,7 +295,7 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
         yield return new WaitUntil(() => request.done);
 
         float time = Time.realtimeSinceStartup;
-        DispatchKernels();
+        DispatchKernels(size);
         request = AsyncGPUReadback.Request(timingBuffer);
         yield return new WaitUntil(() => request.done);
         time = Time.realtimeSinceStartup - time;
@@ -336,9 +312,9 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
 
         Debug.Log("BEGINNING VALIDATE POWERS OF TWO.");
 
-        validationCount = 0;
+        int validationCount = 0;
         for (int s = 21; s <= 28; ++s)
-            yield return TestAtSize(1 << s);
+            yield return validationCount += TestAtSizeIndirect(1 << s) ? 1 : 0;
 
         if (validationCount == 8)
             Debug.Log(computeShaderString + " [" + validationCount + "/ 8]. ALL TESTS PASSED");
@@ -346,18 +322,20 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
             Debug.Log(computeShaderString + " FAILED. [" + validationCount + "/ 8] PASSED");
 
         UpdateSize(size);
+
         breaker = true;
     }
 
     public virtual IEnumerator ValidateAllOffsizes()
     {
         breaker = false;
-        Debug.Log("Beginning Validate All Off Sizes. This may take a while.");
 
-        validationCount = 0;
+        Debug.Log("Beginning Validate All Off Sizes.");
+
+        int validationCount = 0;
         for (int i = 1; i <= partitionSize; ++i)
         {
-            yield return TestAtSize((1 << 16) + i);
+            yield return validationCount += TestAtSizeIndirect((1 << 16) + i) ? 1 : 0;
             if ((i & 31) == 0)
                 Debug.Log("Running");
         }
@@ -368,58 +346,56 @@ public class ChainedScanWithDecoupledLookbackInclusive : MonoBehaviour
             Debug.LogError("[" + validationCount + "/" + partitionSize + "] TESTS PASSED");
 
         UpdateSize(size);
+
         breaker = true;
     }
 
-    private IEnumerator TestAtSize(int _size)
+    private bool TestAtSizeIndirect(int _size)
     {
-        UpdateSize(_size);
+        if (size != _size)
+            UpdateSize(_size);
         ResetBuffers();
-        AsyncGPUReadbackRequest request = AsyncGPUReadback.Request(stateBuffer);
-        yield return new WaitUntil(() => request.done);
-
-        DispatchKernels();
-        validationArray = new uint[Mathf.CeilToInt(_size / 4.0f) * 4];
-        prefixSumBuffer.GetData(validationArray);
-        if (printValidationText ? ValWithText(_size) : Validate(_size))
-            validationCount++;
-        else
-            Debug.LogError(computeShaderString + " FAILED AT SIZE: " + _size);
+        DispatchKernels(_size);
+        return ValidateIndirect(_size);
     }
 
-    private bool Validate(int _size)
+    private bool ValidateIndirect(int _size)
     {
-        for (uint i = 0; i < _size; ++i)
+        bool isValid = true;
+        uint[] t = new uint[1] { 0 };
+        ComputeBuffer validate = new ComputeBuffer(1, sizeof(uint));
+        validate.SetData(t);
+
+        ComputeBuffer errorAppend = new ComputeBuffer(1024, sizeof(uint) * 3, ComputeBufferType.Append);
+        errorAppend.SetCounterValue(0);
+
+        compute.SetBuffer(k_validate, "b_validate", validate);
+        compute.SetBuffer(k_validate, "b_error", errorAppend);
+        compute.Dispatch(k_validate, divRoundUp(_size, 8192), 1, 1);
+
+        validate.GetData(t);
+
+        if (t[0] > 0)
         {
-            if (validationArray[i] != (i + 1))
-                return false;
+            Vector3Int[] err = new Vector3Int[1024];
+            errorAppend.GetData(err);
+
+            t[0] = t[0] < 1024 ? t[0] : 1024;
+            for (int i = 0; i < t[0]; ++i)
+                Debug.LogError("EXPECTED THE SAME AT INDEX " + err[i].x + ": " + err[i].y + ", " + err[i].z);
+
+            isValid = false;
         }
-        return true;
+
+        validate.Dispose();
+        errorAppend.Dispose();
+
+        return isValid;
     }
 
-    private bool ValWithText(int _size)
+    private int divRoundUp(int dividend, int divisor)
     {
-        bool isValidated = true;
-        int errCount = 0;
-        for (uint i = 0; i < _size; ++i)
-        {
-            if (validationArray[i] != (i + 1))
-            {
-                isValidated = false;
-                if (printValidationText)
-                {
-                    Debug.LogError("EXPECTED THE SAME AT INDEX " + i + ": " + (i + 1) + ", " + validationArray[i]);
-                    if (quickText)
-                    {
-                        errCount++;
-                        if (errCount > 1024)
-                            break;
-                    }
-                }
-            }
-        }
-
-        return isValidated;
+        return (dividend + divisor - 1) / divisor;
     }
 
     private void OnDestroy()

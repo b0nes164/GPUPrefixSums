@@ -16,15 +16,9 @@ This project is a survey of GPU prefix sums, ranging from the warp to the device
 # Important Notes
 <details>
   
-  <summary>Currently, this project does not work on AMD or integrated graphics hardware.</summary>
+  <summary><s>Currently, this project does not work on AMD or integrated graphics hardware.</s> Support for AMD and Nvidia hardware added! <b>ALGORITHMS UNTESTED ON NON-NVIDIA HARDWARE. TEST BEFORE USING!</b></summary>
   
-</br>Unfortunately, AMD, Nvidia, and integrated graphics usually have different wave sizes, which means that code that synchronizes threads on a wave level, like we do, must be manually tuned for each hardware case. Because Unity does not support runtime compilation of compute shaders, we cannot poll the hardware at runtime to compile a targetted shader variant. Although Unity does have the `multi_compile` functionality, it is a very cumbersome solution because it means maintaining and compiling a copy of each kernel for each hardware case.
-
-Eventually I will implement `multi_compile`, but until then non-Nvidia users will have to manually change the preprocessor macros in the `.compute` file. To do so, open up the `.compute` file of the desired scan. Inside you will find the preprocessor macros like so:
-
-  ![image](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/a1290a27-4106-4b3e-81d9-26a2e41bcca6)
-
-Comment out or delete the Nvidia values, and uncomment the AMD values.
+</br> All algorithms above the warp level or not in the survey *should* support any wave size >= 32. The survey or the warp level prefix sums will still need to be changed manually because some kernels dispatch exactly wave width threads. Due to difficulties activating a Unity license on my AMD computer, I have not been able to test the algorithms on that computer.
  
 </details>
 
@@ -52,6 +46,14 @@ Comment out or delete the Nvidia values, and uncomment the AMD values.
   
 </details>
 
+<details>
+  
+  <summary>Headless compute versions for Vulkan and DX12 coming eventually!</summary>
+
+  </br>I plan to add these... sometime?
+  
+</details>
+
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
@@ -62,14 +64,15 @@ Comment out or delete the Nvidia values, and uncomment the AMD values.
 <!-- This content will not appear in the rendered Markdown -->
 <!-- This content will not appear in the rendered Markdown -->
 
-# To Use This Project
+# To Use This Project in Unity
 
 1. Download or clone the repository.
-2. Drag the contents of `src` into a desired folder within a Unity project.
-3. All build ready prefix sums can be found in the `MainPrefixSums` folder. The survey of underlying prefix sum variants can be found in the `Survey` folder.
-4. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere.cs`.
-5. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
-6. Ensure the slider is set to a nonzero value.
+2. Drag the contents of `Unity` into a desired folder within a Unity project.
+3. The survey of underlying prefix sum variants can be found in the `Survey` folder. All other prefix sums are organized into folders based on their device utilization level: warp/wave, block, and device.
+4. Survey or warp/wave level prefix sums must be manually changed depending on the hardware. (This is because we dispatch exactly wave width threads).
+5. Every scan variant has a compute shader and a dispatcher. Attach the desired scan's dispatcher to an empty game object. All scan dispatchers are named  `ScanNameHere.cs`.
+6. Attach the matching compute shader to the game object. All compute shaders are named `ScanNameHere.compute`. The dispatcher will return an error if you attach the wrong shader.
+7. Ensure the slider is set to a nonzero value.
 
 If you did this correctly you should see this in the inspector:
 
@@ -86,9 +89,9 @@ If you did this correctly you should see this in the inspector:
 ![Tests](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/067b9d12-582d-4c30-9529-519398ef0d0b)
 
 
-Every scan dispatcher has a suite of tests which can be controlled directly from the inspector.
+Every scan dispatcher has a suite of tests which can be controlled directly from the inspector. To reduce lag on large input sizes, validation tests will only print the first 1024 errors found.
 
-+ `Validate Prefix Sum` performs a prefix sum at the current `Input Size`, then reads the output back into CPU memory for validation.
++ `Validate Prefix Sum` performs a prefix sum at the current `Input Size`, then validates the output.
 
 + `Validate Prefix Sum Random` performs a prefix sum on a buffer of random values at the current `Input Size`. By default, the buffer is filled with the value 1. This makes error checking very simple, because the correct prefix sum is the sequence of positive integers. However this makes some other errors possible, so to cover our bases we include this test.
 
@@ -101,10 +104,6 @@ Every scan dispatcher has a suite of tests which can be controlled directly from
 + `Validate Powers of Two` performs a prefix sum at an input size of each power of two from 21 to 28. Useful as a quick measure of correct execution of the prefix sum.
 
 + `Validate All Off Sizes` performs a series of tests to ensure that the perfix sum correctly handles non-powers-of-two buffer sizes.
-
-+ `PrintValidationText` prints any errors during a validation test in the deubg log. This can be quite slow if there are many errors, so it is recommended to also have `QuickText` enabled.
-
-+ `QuickText` limits the number of errors printed during a validation test to 1024.   
 
 </details>
 

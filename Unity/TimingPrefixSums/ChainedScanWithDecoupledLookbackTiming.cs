@@ -9,9 +9,6 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
     private enum TestType
     {
         //Checks to see if the prefix sum is valid.
-        //If validationText is enabled, EVERY index that does not match the correct sum will be printed.
-        //It is recommended to enable quick text which will limit the number errors printed to 1024,
-        //because printing many errors can be quite slow.
         ValidatePrefixSum,
 
         //Validates prefix sum on an input of random numbers instead of the default of input of all elements initialized to one.
@@ -36,7 +33,7 @@ public class ChainedScanWithDecoupledLookbackTiming : MonoBehaviour
     [SerializeField]
     private TestType testType;
 
-    [Range(1, 40)]
+    [Range(1, 30)]
     public int loopRepeats;
 
     [Range(1, 1000)]
