@@ -14,6 +14,7 @@
  ******************************************************************************/
 #pragma once
 #include "Utils.cuh"
+#include "LocalScan.cuh"
 
 namespace ChainedScanDecoupledLookback
 {

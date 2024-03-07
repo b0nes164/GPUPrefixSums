@@ -12,7 +12,6 @@
  * Copyright (c) 2011-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  ******************************************************************************/
-
 #pragma once
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"

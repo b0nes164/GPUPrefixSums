@@ -13,11 +13,15 @@
   <ItemGroup>
     <CudaCompile Include="ChainedScanDecoupledLookback.cu" />
     <CudaCompile Include="GPUPrefixSumsCUDA.cu" />
+    <CudaCompile Include="ReduceThenScan.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChainedScanDecoupledLookback.cuh" />
     <ClInclude Include="ChainedScanDecoupledLookbackDispatcher.cuh" />
     <ClInclude Include="CubDispatcher.cuh" />
+    <ClInclude Include="LocalScan.cuh" />
+    <ClInclude Include="ReduceThenScan.cuh" />
+    <ClInclude Include="ReduceThenScanDispatcher.cuh" />
     <ClInclude Include="UtilityKernels.cuh" />
     <ClInclude Include="Utils.cuh" />
   </ItemGroup>

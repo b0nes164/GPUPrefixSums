@@ -17,13 +17,10 @@
 #define PART_VEC_SIZE	768
 #define GRID_DIM        256
 
-#define VECTOR_MASK		3
-#define VECTOR_LOG		2
-
 #define WARP_PARTITIONS 3
 #define WARP_PART_SIZE  96
 #define WARP_PART_START (WARP_INDEX * WARP_PART_SIZE)
-#define PART_START      (_partIndex * PART_VEC_SIZE)
+#define PART_START      (partitionIndex * PART_VEC_SIZE)
 
 #define FLAG_NOT_READY  0           //Flag indicating this partition tile's local reduction is not ready
 #define FLAG_REDUCTION  1           //Flag indicating this partition tile's local reduction is ready
@@ -37,140 +34,8 @@ __device__ __forceinline__ uint32_t AcquirePartitionIndex(
 {
     if (threadIdx.x == 0)
         _broadcast = atomicAdd((uint32_t*)&_index[0], 1);
-    __syncthreads();
-
-    return _broadcast;
 }
 
-__device__ __forceinline__ void ScanExclusiveFull(
-    uint32_t* _scan,
-    uint32_t* _reduction,
-    uint4* _csdl,
-    const uint32_t& _partIndex)
-{
-    uint32_t warpReduction = 0;
-
-    #pragma unroll
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS;
-        i += LANE_COUNT, ++k)
-    {
-        uint4 t = reinterpret_cast<uint4*>(_scan)[i + PART_START];
-
-        uint32_t t2 = t.x;
-        t.x += t.y;
-        t.y = t2;
-
-        t2 = t.x;
-        t.x += t.z;
-        t.z = t2;
-
-        t2 = t.x;
-        t.x += t.w;
-        t.w = t2;
-
-        t2 = InclusiveWarpScanCircularShift(t.x);
-        _csdl[i] = SetXAddYZW((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
-        warpReduction += __shfl_sync(0xffffffff, t2, 0);
-    }
-
-    if (getLaneId() == 0)
-        _reduction[WARP_INDEX] = warpReduction;
-}
-
-__device__ __forceinline__ void ScanExclusivePartial(
-    uint32_t* _scan,
-    uint32_t* _reduction,
-    uint4* _csdl,
-    const uint32_t& _partIndex,
-    const uint32_t& alignedSize)
-{
-    uint32_t warpReduction = 0;
-    const uint32_t finalPartSize = alignedSize - PART_START;
-    #pragma unroll
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS;
-        i += LANE_COUNT, ++k)
-    {
-        uint4 t = i < finalPartSize ? reinterpret_cast<uint4*>(_scan)[i + PART_START] :
-            make_uint4(0, 0, 0, 0);
-
-        uint32_t t2 = t.x;
-        t.x += t.y;
-        t.y = t2;
-
-        t2 = t.x;
-        t.x += t.z;
-        t.z = t2;
-
-        t2 = t.x;
-        t.x += t.w;
-        t.w = t2;
-
-        t2 = InclusiveWarpScanCircularShift(t.x);
-        _csdl[i] = SetXAddYZW((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
-        warpReduction += __shfl_sync(0xffffffff, t2, 0);
-    }
-
-    if (getLaneId() == 0)
-        _reduction[WARP_INDEX] = warpReduction;
-}
-
-__device__ __forceinline__ void ScanInclusiveFull(
-    uint32_t* _scan,
-    uint32_t* _reduction,
-    uint4* _csdl,
-    const uint32_t& _partIndex)
-{
-    uint32_t warpReduction = 0;
-
-    #pragma unroll
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS;
-        i += LANE_COUNT, ++k)
-    {
-        uint4 t = reinterpret_cast<uint4*>(_scan)[i + PART_START];
-        t.y += t.x;
-        t.z += t.y;
-        t.w += t.z;
-
-        const uint32_t t2 = InclusiveWarpScanCircularShift(t.w);
-        _csdl[i] = AddUintToUint4((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
-        warpReduction += __shfl_sync(0xffffffff, t2, 0);
-    }
-
-    if (getLaneId() == 0)
-        _reduction[WARP_INDEX] = warpReduction;
-}
-
-__device__ __forceinline__ void ScanInclusivePartial(
-    uint32_t* _scan,
-    uint32_t* _reduction,
-    uint4* _csdl,
-    const uint32_t& _partIndex,
-    const uint32_t& alignedSize)
-{
-    uint32_t warpReduction = 0;
-    const uint32_t finalPartSize = alignedSize - PART_START;
-    #pragma unroll
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS;
-        i += LANE_COUNT, ++k)
-    {
-        uint4 t = i < finalPartSize ? reinterpret_cast<uint4*>(_scan)[i + PART_START] :
-            make_uint4(0, 0, 0, 0);
-        t.y += t.x;
-        t.z += t.y;
-        t.w += t.z;
-
-        const uint32_t t2 = InclusiveWarpScanCircularShift(t.w);
-        _csdl[i] = AddUintToUint4((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
-        warpReduction += __shfl_sync(0xffffffff, t2, 0);
-    }
-
-    if (getLaneId() == 0)
-        _reduction[WARP_INDEX] = warpReduction;
-}
 __device__ __forceinline__ void LocalReduceDeviceBroadcast(
     uint32_t* _reduction,
     volatile uint32_t* _threadBlockReduction,
@@ -223,39 +88,6 @@ __device__ __forceinline__ void Lookback(
     }
 }
 
-__device__ __forceinline__ void DownSweepFull(
-    uint32_t* _scan,
-    uint4* _csdl,
-    const uint32_t& _prevReduction,
-    const uint32_t& _partIndex)
-{
-    #pragma unroll
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS;
-        i += LANE_COUNT, ++k)
-    {
-        reinterpret_cast<uint4*>(_scan)[i + PART_START] =
-            AddUintToUint4(_prevReduction, _csdl[i]);
-    }
-}
-
-__device__ __forceinline__ void DownSweepPartial(
-    uint32_t* _scan,
-    uint4* _csdl,
-    const uint32_t& _prevReduction,
-    const uint32_t& _partIndex,
-    const uint32_t& _alignedSize)
-{
-    const uint32_t finalPartSize = _alignedSize - PART_START;
-    for (uint32_t i = getLaneId() + WARP_PART_START, k = 0;
-        k < WARP_PARTITIONS && i < finalPartSize;
-        i += LANE_COUNT, ++k)
-    {
-        reinterpret_cast<uint4*>(_scan)[i + PART_START] = 
-            AddUintToUint4(_prevReduction, _csdl[i]);
-    }
-}
-
 __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
 	uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
@@ -266,13 +98,32 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
     __shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
     __shared__ uint32_t s_broadcast;
 
-    const uint32_t partitionIndex = AcquirePartitionIndex(s_broadcast, index);
+    AcquirePartitionIndex(s_broadcast, index);
+    __syncthreads();
+    const uint32_t partitionIndex = s_broadcast;
 
     if (partitionIndex < gridDim.x - 1)
-        ScanExclusiveFull(scan, s_reduction, s_csdl, partitionIndex);
+    {
+        ScanExclusiveFull(
+            scan,
+            s_reduction,
+            s_csdl,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START);
+    }
 
     if (partitionIndex == gridDim.x - 1)
-        ScanExclusivePartial(scan, s_reduction, s_csdl, partitionIndex, alignedSize);
+    {
+        ScanExclusivePartial(
+            scan,
+            s_reduction,
+            s_csdl,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START,
+            alignedSize);
+    }
     __syncthreads();
 
     LocalReduceDeviceBroadcast(s_reduction, threadBlockReduction, partitionIndex);
@@ -286,10 +137,28 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
         prevReduction += s_broadcast + s_reduction[WARP_INDEX - 1];
 
     if (partitionIndex < gridDim.x - 1)
-        DownSweepFull(scan, s_csdl, prevReduction, partitionIndex);
+    {
+        DownSweepFull(
+            scan,
+            s_csdl,
+            prevReduction,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START);
+    }
+
 
     if (partitionIndex == gridDim.x - 1)
-        DownSweepPartial(scan, s_csdl, prevReduction, partitionIndex, alignedSize);
+    {
+        DownSweepPartial(
+            scan,
+            s_csdl,
+            prevReduction,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START,
+            alignedSize);
+    }
 }
 
 __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
@@ -302,13 +171,32 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
     __shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
     __shared__ uint32_t s_broadcast;
 
-    const uint32_t partitionIndex = AcquirePartitionIndex(s_broadcast, index);
+    AcquirePartitionIndex(s_broadcast, index);
+    __syncthreads();
+    const uint32_t partitionIndex = s_broadcast;
 
     if (partitionIndex < gridDim.x - 1)
-        ScanInclusiveFull(scan, s_reduction, s_csdl, partitionIndex);
+    {
+        ScanInclusiveFull(
+            scan,
+            s_reduction,
+            s_csdl,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START);
+    }
 
     if (partitionIndex == gridDim.x - 1)
-        ScanInclusivePartial(scan, s_reduction, s_csdl, partitionIndex, alignedSize);
+    {
+        ScanInclusivePartial(
+            scan,
+            s_reduction,
+            s_csdl,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START,
+            alignedSize);
+    }
     __syncthreads();
 
     LocalReduceDeviceBroadcast(s_reduction, threadBlockReduction, partitionIndex);
@@ -322,8 +210,26 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
         prevReduction += s_broadcast + s_reduction[WARP_INDEX - 1];
 
     if (partitionIndex < gridDim.x - 1)
-        DownSweepFull(scan, s_csdl, prevReduction, partitionIndex);
+    {
+        DownSweepFull(
+            scan,
+            s_csdl,
+            prevReduction,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START);
+    }
+        
 
     if (partitionIndex == gridDim.x - 1)
-        DownSweepPartial(scan, s_csdl, prevReduction, partitionIndex, alignedSize);
+    {
+        DownSweepPartial(
+            scan,
+            s_csdl,
+            prevReduction,
+            PART_START,
+            WARP_PARTITIONS,
+            WARP_PART_START,
+            alignedSize);
+    }
 }

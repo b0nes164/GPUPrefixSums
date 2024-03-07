@@ -7,6 +7,7 @@
  *
  ******************************************************************************/
 #include "ChainedScanDecoupledLookbackDispatcher.cuh"
+#include "ReduceThenScanDispatcher.cuh"
 #include "CubDispatcher.cuh"
 
 int main()
@@ -17,6 +18,13 @@ int main()
 	csdl->TestAllInclusive();
 	csdl->BatchTimingInclusive(1 << 28, 100);
 	csdl->~ChainedScanDecoupledLookbackDispatcher();
+
+	ReduceThenScanDispatcher* rts =
+		new ReduceThenScanDispatcher(1 << 28);
+	rts->TestAllExclusive();
+	rts->TestAllInclusive();
+	rts->BatchTimingInclusive(1 << 28, 100);
+	rts->~ReduceThenScanDispatcher();
 
 	CubDispatcher* cub = new CubDispatcher(1 << 28);
 	cub->BatchTimingCubChainedScan(1 << 28, 100);

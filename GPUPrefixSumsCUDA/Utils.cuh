@@ -85,14 +85,28 @@ __device__ __forceinline__ uint32_t WarpReduceSum(uint32_t val)
 	return val;
 }
 
+__device__ __forceinline__ uint32_t ActiveWarpReduceSum(uint32_t val)
+{
+	uint32_t activeMask = __activemask();
+
+	#pragma unroll
+	for (int mask = 16; mask; mask >>= 1) // 16 = LANE_COUNT >> 1
+		val += __shfl_xor_sync(activeMask, val, mask, LANE_COUNT);
+
+	return val;
+}
+
 __device__ __forceinline__ uint4 SetXAddYZW(uint32_t valToAdd, uint4 val)
 {
 	return make_uint4(valToAdd, val.y + valToAdd, val.z + valToAdd, val.w + valToAdd);
 }
 
-__device__ __forceinline__ 
-
 __device__ __forceinline__ uint4 AddUintToUint4(uint32_t valToAdd, uint4 val)
 {
 	return make_uint4(val.x + valToAdd, val.y + valToAdd, val.z + valToAdd, val.w + valToAdd);
+}
+
+__device__ __forceinline__ uint32_t ReduceUint4(uint4 val)
+{
+	return val.x + val.y + val.z + val.w;
 }
