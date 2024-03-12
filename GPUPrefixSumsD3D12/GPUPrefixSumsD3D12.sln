@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.34407.143
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GPUPrefixSumsD3D12", "GPUPrefixSumsD3D12.vcxproj", "{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Debug|x64.ActiveCfg = Debug|x64
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Debug|x64.Build.0 = Debug|x64
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Debug|x86.ActiveCfg = Debug|Win32
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Debug|x86.Build.0 = Debug|Win32
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Release|x64.ActiveCfg = Release|x64
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Release|x64.Build.0 = Release|x64
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Release|x86.ActiveCfg = Release|Win32
+		{9887EF0E-DF44-4ED2-B82C-29443EB3C71E}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {636ACEA3-A575-44C6-97FA-3A595B20BBBE}
+	EndGlobalSection
+EndGlobal
