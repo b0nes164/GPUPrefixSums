@@ -19,7 +19,7 @@
     <ClInclude Include="ChainedScanDecoupledLookback.cuh" />
     <ClInclude Include="ChainedScanDecoupledLookbackDispatcher.cuh" />
     <ClInclude Include="CubDispatcher.cuh" />
-    <ClInclude Include="LocalScan.cuh" />
+    <ClInclude Include="ScanCommon.cuh" />
     <ClInclude Include="ReduceThenScan.cuh" />
     <ClInclude Include="ReduceThenScanDispatcher.cuh" />
     <ClInclude Include="UtilityKernels.cuh" />

@@ -15,7 +15,7 @@
 #include "ChainedScanDecoupledLookback.cuh"
 
 #define PART_VEC_SIZE	768
-#define GRID_DIM        256
+#define BLOCK_DIM       256
 
 #define WARP_PARTITIONS 3
 #define WARP_PART_SIZE  96
@@ -41,10 +41,10 @@ __device__ __forceinline__ void LocalReduceDeviceBroadcast(
     volatile uint32_t* _threadBlockReduction,
     const uint32_t& _partIndex)
 {
-    if (threadIdx.x < GRID_DIM / LANE_COUNT)
+    if (threadIdx.x < BLOCK_DIM / LANE_COUNT)
         _reduction[threadIdx.x] = ActiveInclusiveWarpScan(_reduction[threadIdx.x]);
 
-    if (threadIdx.x == GRID_DIM / LANE_COUNT - 1)
+    if (threadIdx.x == BLOCK_DIM / LANE_COUNT - 1)
     {
         atomicAdd((uint32_t*)&_threadBlockReduction[_partIndex],
             (_partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | _reduction[threadIdx.x] << 2);
@@ -92,10 +92,10 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
 	uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
 	volatile uint32_t* index,
-	uint32_t alignedSize)
+	uint32_t vectorizedSize)
 {
     __shared__ uint4 s_csdl[PART_VEC_SIZE];
-    __shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
+    __shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
     __shared__ uint32_t s_broadcast;
 
     AcquirePartitionIndex(s_broadcast, index);
@@ -122,7 +122,7 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
             PART_START,
             WARP_PARTITIONS,
             WARP_PART_START,
-            alignedSize);
+            vectorizedSize);
     }
     __syncthreads();
 
@@ -157,7 +157,7 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
             PART_START,
             WARP_PARTITIONS,
             WARP_PART_START,
-            alignedSize);
+            vectorizedSize);
     }
 }
 
@@ -165,10 +165,10 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
 	uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
 	volatile uint32_t* index,
-	uint32_t alignedSize)
+	uint32_t vectorizedSize)
 {
     __shared__ uint4 s_csdl[PART_VEC_SIZE];
-    __shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
+    __shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
     __shared__ uint32_t s_broadcast;
 
     AcquirePartitionIndex(s_broadcast, index);
@@ -195,7 +195,7 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
             PART_START,
             WARP_PARTITIONS,
             WARP_PART_START,
-            alignedSize);
+            vectorizedSize);
     }
     __syncthreads();
 
@@ -230,6 +230,6 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
             PART_START,
             WARP_PARTITIONS,
             WARP_PART_START,
-            alignedSize);
+            vectorizedSize);
     }
 }

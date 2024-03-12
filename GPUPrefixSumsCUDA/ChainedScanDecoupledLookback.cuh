@@ -14,7 +14,7 @@
  ******************************************************************************/
 #pragma once
 #include "Utils.cuh"
-#include "LocalScan.cuh"
+#include "ScanCommon.cuh"
 
 namespace ChainedScanDecoupledLookback
 {
@@ -22,11 +22,11 @@ namespace ChainedScanDecoupledLookback
 		uint32_t* scan,
 		volatile uint32_t* threadBlockReduction,
 		volatile uint32_t* index,
-		uint32_t alignedSize);
+		uint32_t vectorizedSize);
 
 	__global__ void CSDLInclusive(
 		uint32_t* scan,
 		volatile uint32_t* threadBlockReduction,
 		volatile uint32_t* index,
-		uint32_t alignedSize);
+		uint32_t vectorizedSize);
 }

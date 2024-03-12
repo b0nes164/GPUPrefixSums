@@ -54,10 +54,10 @@ __device__ __forceinline__ void ScanExclusivePartial(
     const uint32_t& _partStart,
     const uint32_t& _warpParts,
     const uint32_t& _warpPartStart,
-    const uint32_t& _alignedSize)
+    const uint32_t& _vectorizedSize)
 {
     uint32_t warpReduction = 0;
-    const uint32_t finalPartSize = _alignedSize - _partStart;
+    const uint32_t finalPartSize = _vectorizedSize - _partStart;
     #pragma unroll
     for (uint32_t i = getLaneId() + _warpPartStart, k = 0;
         k < _warpParts;
@@ -123,10 +123,10 @@ __device__ __forceinline__ void ScanInclusivePartial(
     const uint32_t& _partStart,
     const uint32_t& _warpParts,
     const uint32_t& _warpPartStart,
-    const uint32_t& _alignedSize)
+    const uint32_t& _vectorizedSize)
 {
     uint32_t warpReduction = 0;
-    const uint32_t finalPartSize = _alignedSize - _partStart;
+    const uint32_t finalPartSize = _vectorizedSize - _partStart;
     #pragma unroll
     for (uint32_t i = getLaneId() + _warpPartStart, k = 0;
         k < _warpParts;
@@ -172,9 +172,9 @@ __device__ __forceinline__ void DownSweepPartial(
     const uint32_t& _partStart,
     const uint32_t& _warpParts,
     const uint32_t& _warpPartStart,
-    const uint32_t& _alignedSize)
+    const uint32_t& _vectorizedSize)
 {
-    const uint32_t finalPartSize = _alignedSize - _partStart;
+    const uint32_t finalPartSize = _vectorizedSize - _partStart;
     for (uint32_t i = getLaneId() + _warpPartStart, k = 0;
         k < _warpParts && i < finalPartSize;
         i += LANE_COUNT, ++k)

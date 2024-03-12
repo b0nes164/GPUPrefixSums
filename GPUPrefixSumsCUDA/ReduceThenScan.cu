@@ -10,7 +10,7 @@
 #include "ReduceThenScan.cuh"
 
 #define PART_VEC_SIZE	768
-#define GRID_DIM		256
+#define BLOCK_DIM		256
 
 #define WARP_PARTITIONS 3
 #define WARP_PART_SIZE  96
@@ -20,16 +20,16 @@
 __device__ __forceinline__ void LocalReduce(
 	uint32_t* _reduction)
 {
-	if (threadIdx.x < GRID_DIM / LANE_COUNT)
+	if (threadIdx.x < BLOCK_DIM / LANE_COUNT)
 		_reduction[threadIdx.x] = ActiveInclusiveWarpScan(_reduction[threadIdx.x]);
 }
 
 __global__ void ReduceThenScan::Reduce(
 	uint32_t* scan,
 	uint32_t* threadBlockReductions,
-	uint32_t alignedSize)
+	uint32_t vectorizedSize)
 {
-	__shared__ uint32_t s_red[GRID_DIM / LANE_COUNT];
+	__shared__ uint32_t s_red[BLOCK_DIM / LANE_COUNT];
 	//full
 	if (blockIdx.x < gridDim.x - 1)
 	{
@@ -50,8 +50,8 @@ __global__ void ReduceThenScan::Reduce(
 		for (uint32_t i = threadIdx.x + PART_START; i < partEnd; i += blockDim.x)
 		{
 			warpReduction += WarpReduceSum(
-				i < alignedSize ? 0 :
-				WarpReduceSum(ReduceUint4(reinterpret_cast<uint4*>(scan)[i])));
+				i < vectorizedSize ? 0 :
+				ReduceUint4(reinterpret_cast<uint4*>(scan)[i]));
 		}
 
 		if (!getLaneId())
@@ -60,7 +60,7 @@ __global__ void ReduceThenScan::Reduce(
 	__syncthreads();
 
 	uint32_t blockReduction;
-	if (threadIdx.x < GRID_DIM / LANE_COUNT)
+	if (threadIdx.x < BLOCK_DIM / LANE_COUNT)
 		blockReduction = ActiveWarpReduceSum(s_red[WARP_INDEX]);
 
 	if (!threadIdx.x)
@@ -71,7 +71,7 @@ __global__ void ReduceThenScan::Scan(
 	uint32_t* threadBlockReductions,
 	uint32_t threadBlocks)
 {
-	__shared__ uint32_t s_scan[GRID_DIM];
+	__shared__ uint32_t s_scan[BLOCK_DIM];
 
 	uint32_t reduction = 0;
 	const uint32_t circularLaneShift = getLaneId() + 1 & LANE_MASK;
@@ -127,10 +127,10 @@ __global__ void ReduceThenScan::Scan(
 __global__ void ReduceThenScan::DownSweepExclusive(
 	uint32_t* scan,
 	uint32_t* threadBlockReductions,
-	uint32_t alignedSize)
+	uint32_t vectorizedSize)
 {
 	__shared__ uint4 s_rts[PART_VEC_SIZE];
-	__shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
+	__shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
 
 	//full
 	if (blockIdx.x < gridDim.x - 1)
@@ -154,7 +154,7 @@ __global__ void ReduceThenScan::DownSweepExclusive(
 			PART_START,
 			WARP_PARTITIONS,
 			WARP_PART_START,
-			alignedSize);
+			vectorizedSize);
 	}
 
 	uint32_t prevReduction = blockIdx.x ? threadBlockReductions[blockIdx.x] : 0;
@@ -187,17 +187,17 @@ __global__ void ReduceThenScan::DownSweepExclusive(
 			PART_START,
 			WARP_PARTITIONS,
 			WARP_PART_START,
-			alignedSize);
+			vectorizedSize);
 	}
 }
 
 __global__ void ReduceThenScan::DownSweepInclusive(
 	uint32_t* scan,
 	uint32_t* threadBlockReductions,
-	uint32_t alignedSize)
+	uint32_t vectorizedSize)
 {
 	__shared__ uint4 s_rts[PART_VEC_SIZE];
-	__shared__ uint32_t s_reduction[GRID_DIM / LANE_COUNT];
+	__shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
 
 	//full
 	if (blockIdx.x < gridDim.x - 1)
@@ -221,7 +221,7 @@ __global__ void ReduceThenScan::DownSweepInclusive(
 			PART_START,
 			WARP_PARTITIONS,
 			WARP_PART_START,
-			alignedSize);
+			vectorizedSize);
 	}
 
 	uint32_t prevReduction = blockIdx.x ? threadBlockReductions[blockIdx.x] : 0;
@@ -254,6 +254,6 @@ __global__ void ReduceThenScan::DownSweepInclusive(
 			PART_START,
 			WARP_PARTITIONS,
 			WARP_PART_START,
-			alignedSize);
+			vectorizedSize);
 	}
 }

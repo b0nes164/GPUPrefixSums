@@ -9,14 +9,14 @@
  ******************************************************************************/
 #pragma once
 #include "Utils.cuh"
-#include "LocalScan.cuh"
+#include "ScanCommon.cuh"
 
 namespace ReduceThenScan
 {
 	__global__ void Reduce(
 		uint32_t* scan,
 		uint32_t* threadBlockReductions,
-		uint32_t alignedSize);
+		uint32_t vectorizedSize);
 
 	__global__ void Scan(
 		uint32_t* threadBlockReductions,
@@ -25,10 +25,10 @@ namespace ReduceThenScan
 	__global__ void DownSweepExclusive(
 		uint32_t* scan,
 		uint32_t* threadBlockReductions,
-		uint32_t alignedSize);
+		uint32_t vectorizedSize);
 
 	__global__ void DownSweepInclusive(
 		uint32_t* scan,
 		uint32_t* threadBlockReductions,
-		uint32_t alignedSize);
+		uint32_t vectorizedSize);
 }

@@ -23,7 +23,7 @@ class ChainedScanDecoupledLookbackDispatcher
 
 public:
 	ChainedScanDecoupledLookbackDispatcher(uint32_t maxSize) :
-		k_maxSize(maxSize)
+		k_maxSize(align16(maxSize))
 	{
 		const uint32_t maxThreadBlocks = divRoundUp(k_maxSize, k_partitionSize);
 		cudaMalloc(&m_scan, k_maxSize * sizeof(uint32_t));
@@ -179,6 +179,11 @@ private:
 		return divRoundUp(x, 4) * 4;
 	}
 
+	static inline uint32_t vectorizeAlignedSize(uint32_t alignedSize)
+	{
+		return alignedSize / 4;
+	}
+
 	void ClearMemory(uint32_t threadBlocks)
 	{
 		cudaMemset(m_index, 0, sizeof(uint32_t));
@@ -187,28 +192,30 @@ private:
 
 	void DispatchKernelsExclusive(uint32_t size)
 	{
-		size = align16(size);
-		const uint32_t threadBlocks = divRoundUp(size, k_partitionSize);
+		uint32_t alignedSize = align16(size);
+		uint32_t vectorizedSize = vectorizeAlignedSize(alignedSize);
+		const uint32_t threadBlocks = divRoundUp(alignedSize, k_partitionSize);
 
 		ClearMemory(threadBlocks);
 
 		cudaDeviceSynchronize();
 
-		ChainedScanDecoupledLookback::CSDLExclusive <<<threadBlocks, k_csdlThreads >>> (m_scan,
-			m_threadBlockReduction, m_index, size);
+		ChainedScanDecoupledLookback::CSDLExclusive <<<threadBlocks, k_csdlThreads>>> (m_scan,
+			m_threadBlockReduction, m_index, vectorizedSize);
 	}
 
 	void DispatchKernelsInclusive(uint32_t size)
 	{
-		size = align16(size);
-		const uint32_t threadBlocks = divRoundUp(size, k_partitionSize);
+		uint32_t alignedSize = align16(size);
+		uint32_t vectorizedSize = vectorizeAlignedSize(alignedSize);
+		const uint32_t threadBlocks = divRoundUp(alignedSize, k_partitionSize);
 
 		ClearMemory(threadBlocks);
 
 		cudaDeviceSynchronize();
 
-		ChainedScanDecoupledLookback::CSDLInclusive <<<threadBlocks, k_csdlThreads >>> (m_scan,
-			m_threadBlockReduction, m_index, size);
+		ChainedScanDecoupledLookback::CSDLInclusive <<<threadBlocks, k_csdlThreads>>> (m_scan,
+			m_threadBlockReduction, m_index, vectorizedSize);
 	}
 
 	bool DispatchValidateExclusive(uint32_t size)
