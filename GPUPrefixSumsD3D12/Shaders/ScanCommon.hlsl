@@ -6,14 +6,14 @@
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
-#define UINT4_PART_SIZE     768
-#define BLOCK_DIM           256
-#define UINT4_PER_THREAD    3
-#define MIN_WAVE_SIZE       4
+#define UINT4_PART_SIZE     768U
+#define BLOCK_DIM           256U
+#define UINT4_PER_THREAD    3U
+#define MIN_WAVE_SIZE       4U
 
 cbuffer cPrefixSum : register(b0)
 {
-    uint e_alignedSize;
+    uint e_vectorizedSize;
     uint e_threadBlocks;
     uint padding0;
     uint padding1;
@@ -49,6 +49,7 @@ inline uint4 SetXAddYZW(uint t, uint4 val)
     return uint4(t, val.yzw + t);
 }
 
+//read in and scan
 inline void ScanExclusiveFull(uint gtid, uint partIndex)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
@@ -87,7 +88,7 @@ inline void ScanExclusivePartial(uint gtid, uint partIndex)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
     const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
-    const uint finalPartSize = e_alignedSize - PartStart(partIndex);
+    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
     uint waveReduction = 0;
     
     [unroll]
@@ -147,7 +148,7 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
     const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
-    const uint finalPartSize = e_alignedSize - PartStart(partIndex);
+    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
     uint waveReduction = 0;
     
     [unroll]
@@ -169,6 +170,7 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex)
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
+//Pass in previous reductions, and write out
 inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
 {
     [unroll]
@@ -180,34 +182,26 @@ inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
     }
 }
 
-inline void DownSweepPartial(uint gtid, uint partIndex, uint prevReduction)
-{
-    const uint finalPartSize = e_alignedSize - PartStart(partIndex);
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
-        k < UINT4_PER_THREAD && i < finalPartSize;
-        i += WaveGetLaneCount(), ++k)
-    {
-        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
-    }
-}
-
-inline void LocalReduceWGE16(uint gtid, uint partIndex)
+//Reduce the wave reductions
+inline void LocalScanInclusiveWGE16(uint gtid, uint partIndex)
 {
     if (gtid < BLOCK_DIM / WaveGetLaneCount())
         g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
 }
 
-inline void LocalReduceWLT16(uint gtid, uint partIndex)
+inline void LocalScanInclusiveWLT16(uint gtid, uint partIndex)
 {
-    g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
+    const uint scanSize = BLOCK_DIM / WaveGetLaneCount();
+    if (gtid < scanSize)
+        g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
     GroupMemoryBarrierWithGroupSync();
         
     const uint laneLog = countbits(WaveGetLaneCount() - 1);
     uint offset = laneLog;
     uint j = WaveGetLaneCount();
-    for (; j < (BLOCK_DIM >> 1); j <<= laneLog)
+    for (; j < (scanSize >> 1); j <<= laneLog)
     {
-        if (gtid < (BLOCK_DIM >> offset))
+        if (gtid < (scanSize >> offset))
         {
             g_reduction[((gtid + 1) << offset) - 1] +=
                     WavePrefixSum(g_reduction[((gtid + 1) << offset) - 1]);
@@ -225,9 +219,20 @@ inline void LocalReduceWLT16(uint gtid, uint partIndex)
         
     //If RADIX is not a multiple of lanecount
     const uint index = gtid + j;
-    if (index < BLOCK_DIM)
+    if (index < scanSize)
     {
         g_reduction[index] +=
             WaveReadLaneAt(g_reduction[((index >> offset) << offset) - 1], 0);
+    }
+}
+
+inline void DownSweepPartial(uint gtid, uint partIndex, uint prevReduction)
+{
+    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < UINT4_PER_THREAD && i < finalPartSize;
+        i += WaveGetLaneCount(), ++k)
+    {
+        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
     }
 }

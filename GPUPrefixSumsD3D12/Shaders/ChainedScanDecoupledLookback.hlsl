@@ -117,10 +117,10 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() < 16)
-        LocalReduceWLT16(gtid.x, partitionIndex);
+        LocalScanInclusiveWGE16(gtid.x, partitionIndex);
     
     if (WaveGetLaneCount() >= 16)
-        LocalReduceWGE16(gtid.x, partitionIndex);
+        LocalScanInclusiveWLT16(gtid.x, partitionIndex);
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
@@ -153,10 +153,10 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() < 16)
-        LocalReduceWLT16(gtid.x, partitionIndex);
+        LocalScanInclusiveWGE16(gtid.x, partitionIndex);
     
     if (WaveGetLaneCount() >= 16)
-        LocalReduceWGE16(gtid.x, partitionIndex);
+        LocalScanInclusiveWLT16(gtid.x, partitionIndex);
     
     DeviceBroadcast(gtid.x, partitionIndex);
     

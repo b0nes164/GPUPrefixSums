@@ -9,8 +9,9 @@
 #include "pch.h"
 #include "GPUPrefixSums.h"
 #include "ChainedScanDecoupledLookback.h"
+#include "ReduceThenScan.h"
 
-extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 611; }
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 613; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
 DeviceInfo GetDeviceInfo(ID3D12Device* device)
@@ -112,5 +113,10 @@ int main()
             deviceInfo);
     csdl->TestAll();
     csdl->BatchTimingInclusiveInitOne(1 << 28, 100);
+
+    ReduceThenScan* rts = new ReduceThenScan(device, deviceInfo);
+    rts->TestAll();
+    rts->BatchTimingInclusiveInitOne(1 << 28, 100);
+
 	return 0;
 }

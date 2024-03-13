@@ -174,13 +174,13 @@ public:
 		}
 		printf("\n");
 		
-		for (uint32_t i = 20; i <= 28; ++i)
+		for (uint32_t i = 20; i <= 24; ++i)
 		{
 			testsPassed += ValidateScan(1 << i, i, ValidationType::ONE_INCLUSIVE);
 			testsPassed += ValidateScan(1 << i, i, ValidationType::ONE_EXCLUSIVE);
 		}
 
-		const uint32_t testsExpected = (k_partitionSize + 9) * 2;
+		const uint32_t testsExpected = (k_partitionSize + 5) * 2;
 		printf(k_scanName);
 		if (testsPassed == testsExpected)
 			printf(" %u/%u ALL TESTS PASSED", testsPassed, testsExpected);

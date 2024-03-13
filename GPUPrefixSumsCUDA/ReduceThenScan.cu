@@ -76,12 +76,11 @@ __global__ void ReduceThenScan::Scan(
 	uint32_t reduction = 0;
 	const uint32_t circularLaneShift = getLaneId() + 1 & LANE_MASK;
 	const uint32_t partitionsEnd = threadBlocks / blockDim.x * blockDim.x;
-	const uint32_t digitOffset = blockIdx.x * threadBlocks;
 
 	uint32_t i = threadIdx.x;
 	for (; i < partitionsEnd; i += blockDim.x)
 	{
-		s_scan[threadIdx.x] = threadBlockReductions[i + digitOffset];
+		s_scan[threadIdx.x] = threadBlockReductions[i];
 		s_scan[threadIdx.x] = InclusiveWarpScan(s_scan[threadIdx.x]);
 		__syncthreads();
 
@@ -92,7 +91,7 @@ __global__ void ReduceThenScan::Scan(
 		}
 		__syncthreads();
 
-		threadBlockReductions[circularLaneShift + (i & ~LANE_MASK) + digitOffset] =
+		threadBlockReductions[circularLaneShift + (i & ~LANE_MASK)] =
 			(getLaneId() != LANE_MASK ? s_scan[threadIdx.x] : 0) +
 			(threadIdx.x >= LANE_COUNT ? __shfl_sync(0xffffffff, s_scan[threadIdx.x - 1], 0) : 0) +
 			reduction;
@@ -102,7 +101,7 @@ __global__ void ReduceThenScan::Scan(
 	}
 
 	if (i < threadBlocks)
-		s_scan[threadIdx.x] = threadBlockReductions[i + digitOffset];
+		s_scan[threadIdx.x] = threadBlockReductions[i];
 	s_scan[threadIdx.x] = InclusiveWarpScan(s_scan[threadIdx.x]);
 	__syncthreads();
 
@@ -116,7 +115,7 @@ __global__ void ReduceThenScan::Scan(
 	const uint32_t index = circularLaneShift + (i & ~LANE_MASK);
 	if (index < threadBlocks)
 	{
-		threadBlockReductions[index + digitOffset] =
+		threadBlockReductions[index] =
 			(getLaneId() != LANE_MASK ? s_scan[threadIdx.x] : 0) +
 			(threadIdx.x >= LANE_COUNT ?
 				s_scan[(threadIdx.x & ~LANE_MASK) - 1] : 0) +

@@ -27,6 +27,9 @@
     <ClCompile Include="ChainedScanDecoupledLookback.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ReduceThenScan.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GPUPrefixSums.h">
@@ -35,7 +38,7 @@
     <ClInclude Include="ComputeShader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ReduceThenScanKernels.h">
+    <ClInclude Include="RTSKernels.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CSDLKernels.h">
@@ -54,6 +57,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ChainedScanDecoupledLookback.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ReduceThenScan.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
