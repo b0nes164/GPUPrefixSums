@@ -8,7 +8,7 @@
  ******************************************************************************/
 #pragma once
 #include "pch.h"
-#include "ComputeShader.h"
+#include "ComputeKernelBase.h"
 
 namespace UtilityKernels
 {
@@ -19,266 +19,301 @@ namespace UtilityKernels
 		ErrorCount = 2,
 	};
 
-    class InitOne
+    class InitOne : public ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         InitOne(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(2);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/Utility.hlsl",
+                shaderPath,
                 L"InitOne",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
             const uint32_t& size)
         {
             std::array<uint32_t, 4> t = { size, 0, 0, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
             cmdList->Dispatch(256, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParams = std::vector<CD3DX12_ROOT_PARAMETER1>(2);
+            rootParams[0].InitAsConstants(4, 0);
+            rootParams[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            return rootParams;
+        }
     };
 
-    class InitRandom
+    class InitRandom : public ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         InitRandom(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
-            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ScanValidation);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/Utility.hlsl",
+                shaderPath,
                 L"InitRandom",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS scanValidationBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanValidationBuffer,
             const uint32_t& size,
             const uint32_t& seed)
         {
             std::array<uint32_t, 4> t = { size, 0, seed, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
             cmdList->SetComputeRootUnorderedAccessView(2, scanValidationBuffer);
             cmdList->Dispatch(256, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
+            rootParameters[0].InitAsConstants(4, 0);
+            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ScanValidation);
+            return rootParameters;
+        }
     };
 
-    class ClearErrorCount
+    class ClearErrorCount : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
-        explicit ClearErrorCount(
+        ClearErrorCount(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(1);
-            rootParameters[0].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/Utility.hlsl",
+                shaderPath,
                 L"ClearErrorCount",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS errorCount)
+            const D3D12_GPU_VIRTUAL_ADDRESS& errorCount)
         {
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRootUnorderedAccessView(0, errorCount);
             cmdList->Dispatch(1, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(1);
+            rootParameters[0].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
+            return rootParameters;
+        }
     };
 
-    class ValidateOneInclusive
+    class ValidateOneInclusive : public ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         ValidateOneInclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
-            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/Utility.hlsl",
+                shaderPath,
                 L"ValidateOneInclusive",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS errorCount,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& errorCount,
             const uint32_t& size)
         {
             std::array<uint32_t, 4> t = { size, 0, 0, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
             cmdList->SetComputeRootUnorderedAccessView(2, errorCount);
             cmdList->Dispatch(256, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
+            rootParameters[0].InitAsConstants(4, 0);
+            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
+            return rootParameters;
+        }
     };
 
-    class ValidateOneExclusive
+    class ValidateOneExclusive : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         ValidateOneExclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
-            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/Utility.hlsl",
+                shaderPath,
                 L"ValidateOneExclusive",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS errorCount,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& errorCount,
             const uint32_t& size)
         {
             std::array<uint32_t, 4> t = { size, 0, 0, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
             cmdList->SetComputeRootUnorderedAccessView(2, errorCount);
             cmdList->Dispatch(256, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
+            rootParameters[0].InitAsConstants(4, 0);
+            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
+            return rootParameters;
+        }
     };
 
-    class ValidateRandomExclusive
+    class ValidateRandomExclusive : public ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         ValidateRandomExclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"ValidateRandomExclusive",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanValidationBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& errorCount,
+            const uint32_t& size)
+        {
+            std::array<uint32_t, 4> t = { size, 0, 0, 0 };
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(2, scanValidationBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(3, errorCount);
+            cmdList->Dispatch(1, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
         {
             auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(4);
             rootParameters[0].InitAsConstants(4, 0);
             rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
             rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ScanValidation);
             rootParameters[3].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
-
-            shader = new ComputeShader(
-                device,
-                info,
-                "Shaders/Utility.hlsl",
-                L"ValidateRandomExclusive",
-                compileArguments,
-                rootParameters);
-        }
-
-        void Dispatch(
-            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS scanValidationBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS errorCount,
-            const uint32_t& size)
-        {
-            std::array<uint32_t, 4> t = { size, 0, 0, 0 };
-            shader->SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, scanValidationBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(3, errorCount);
-            cmdList->Dispatch(1, 1, 1);
+            return rootParameters;
         }
     };
 
-    class ValidateRandomInclusive
+    class ValidateRandomInclusive : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         ValidateRandomInclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"ValidateRandomInclusive",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanValidationBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& errorCount,
+            const uint32_t& size)
+        {
+            std::array<uint32_t, 4> t = { size, 0, 0, 0 };
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(2, scanValidationBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(3, errorCount);
+            cmdList->Dispatch(1, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
         {
             auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(4);
             rootParameters[0].InitAsConstants(4, 0);
             rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
             rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ScanValidation);
             rootParameters[3].InitAsUnorderedAccessView((UINT)Reg::ErrorCount);
-
-            shader = new ComputeShader(
-                device,
-                info,
-                "Shaders/Utility.hlsl",
-                L"ValidateRandomInclusive",
-                compileArguments,
-                rootParameters);
-        }
-
-        void Dispatch(
-            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS scanValidationBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS errorCount,
-            const uint32_t& size)
-        {
-            std::array<uint32_t, 4> t = { size, 0, 0, 0 };
-            shader->SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, scanValidationBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(3, errorCount);
-            cmdList->Dispatch(1, 1, 1);
+            return rootParameters;
         }
     };
 }

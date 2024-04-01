@@ -13,7 +13,7 @@ RWStructuredBuffer<uint> b_scanValidation   : register(u1);
 RWStructuredBuffer<uint> b_errorCount       : register(u2);
 
 
-cbuffer cbParallelSort : register(b0)
+cbuffer cbPrefixSum : register(b0)
 {
     uint e_size;
     uint e_threadBlocks;
@@ -22,7 +22,6 @@ cbuffer cbParallelSort : register(b0)
 };
 
 //Init all elements to one for fast validation
-#define HYBRID_TAUS (z1 ^ z2 ^ z3 ^ z4)
 [numthreads(VAL_THREADS, 1, 1)]
 void InitOne(int3 id : SV_DispatchThreadID)
 {

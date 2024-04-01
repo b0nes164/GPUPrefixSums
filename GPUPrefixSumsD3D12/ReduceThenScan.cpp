@@ -11,8 +11,8 @@
 
 ReduceThenScan::ReduceThenScan(
 	winrt::com_ptr<ID3D12Device> _device,
-	DeviceInfo _deviceInfo) :
-	GPUPrefixSummer("ReduceThenScan ", 3072, 1 << 13)
+	GPUPrefixSums::DeviceInfo _deviceInfo) :
+	GPUPrefixSumBase("ReduceThenScan ", 3072, 1 << 13)
 {
 	m_device.copy_from(_device.get());
 	m_devInfo = _deviceInfo;
@@ -26,20 +26,11 @@ ReduceThenScan::~ReduceThenScan()
 
 void ReduceThenScan::InitComputeShaders()
 {
-	m_rtsReduce = new RTSKernels::Reduce(m_device, m_devInfo, m_compileArguments);
-	m_rtsScan = new RTSKernels::Scan(m_device, m_devInfo, m_compileArguments);
-	m_rtsDownSweepInclusive = new RTSKernels::DownSweepInclusive(m_device, m_devInfo, m_compileArguments);
-	m_rtsDownSweepExclusive = new RTSKernels::DownSweepExclusive(m_device, m_devInfo, m_compileArguments);
-
-	m_initOne = new UtilityKernels::InitOne(m_device, m_devInfo, m_compileArguments);
-	m_initRandom = new UtilityKernels::InitRandom(m_device, m_devInfo, m_compileArguments);
-	m_clearErrorCount = new UtilityKernels::ClearErrorCount(m_device, m_devInfo, m_compileArguments);
-	m_validateOneExclusive = new UtilityKernels::ValidateOneExclusive(m_device, m_devInfo, m_compileArguments);
-	m_validateOneInclusive = new UtilityKernels::ValidateOneInclusive(m_device, m_devInfo, m_compileArguments);
-	m_validateRandomExclusive =
-		new UtilityKernels::ValidateRandomExclusive(m_device, m_devInfo, m_compileArguments);
-	m_validateRandomInclusive =
-		new UtilityKernels::ValidateRandomInclusive(m_device, m_devInfo, m_compileArguments);
+	const std::filesystem::path path = "Shaders/ReduceThenScan.hlsl";
+	m_rtsReduce = new RTSKernels::Reduce(m_device, m_devInfo, m_compileArguments, path);
+	m_rtsScan = new RTSKernels::Scan(m_device, m_devInfo, m_compileArguments, path);
+	m_rtsDownSweepInclusive = new RTSKernels::DownSweepInclusive(m_device, m_devInfo, m_compileArguments, path);
+	m_rtsDownSweepExclusive = new RTSKernels::DownSweepExclusive(m_device, m_devInfo, m_compileArguments, path);
 }
 
 void ReduceThenScan::DisposeBuffers()

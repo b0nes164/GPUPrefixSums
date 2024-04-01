@@ -11,7 +11,7 @@
 #define UINT4_PER_THREAD    3U
 #define MIN_WAVE_SIZE       4U
 
-cbuffer cPrefixSum : register(b0)
+cbuffer cbPrefixSum : register(b0)
 {
     uint e_vectorizedSize;
     uint e_threadBlocks;
@@ -170,18 +170,6 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex)
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-//Pass in previous reductions, and write out
-inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
-{
-    [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
-        k < UINT4_PER_THREAD;
-        i += WaveGetLaneCount(), ++k)
-    {
-        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
-    }
-}
-
 //Reduce the wave reductions
 inline void LocalScanInclusiveWGE16(uint gtid, uint partIndex)
 {
@@ -217,12 +205,24 @@ inline void LocalScanInclusiveWLT16(uint gtid, uint partIndex)
     }
     GroupMemoryBarrierWithGroupSync();
         
-    //If RADIX is not a multiple of lanecount
+    //If RADIX is not a power of lanecount
     const uint index = gtid + j;
     if (index < scanSize)
     {
         g_reduction[index] +=
             WaveReadLaneAt(g_reduction[((index >> offset) << offset) - 1], 0);
+    }
+}
+
+//Pass in previous reductions, and write out
+inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
+{
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < UINT4_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
     }
 }
 

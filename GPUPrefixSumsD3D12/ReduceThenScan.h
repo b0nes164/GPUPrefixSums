@@ -9,10 +9,10 @@
 #pragma once
 #include "pch.h"
 #include "GPUPrefixSums.h"
-#include "GPUPrefixSummer.h"
+#include "GPUPrefixSumBase.h"
 #include "RTSKernels.h"
 
-class ReduceThenScan : public GPUPrefixSummer
+class ReduceThenScan : public GPUPrefixSumBase
 {
 	RTSKernels::Reduce* m_rtsReduce;
 	RTSKernels::Scan* m_rtsScan;
@@ -22,7 +22,7 @@ class ReduceThenScan : public GPUPrefixSummer
 public:
 	ReduceThenScan(
 		winrt::com_ptr<ID3D12Device> _device,
-		DeviceInfo _deviceInfo);
+		GPUPrefixSums::DeviceInfo _deviceInfo);
 
 	~ReduceThenScan();
 

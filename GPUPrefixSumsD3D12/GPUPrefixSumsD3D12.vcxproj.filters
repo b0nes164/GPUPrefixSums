@@ -35,7 +35,7 @@
     <ClInclude Include="GPUPrefixSums.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ComputeShader.h">
+    <ClInclude Include="ComputeKernelBase.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RTSKernels.h">
@@ -44,7 +44,7 @@
     <ClInclude Include="CSDLKernels.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="GPUPrefixSummer.h">
+    <ClInclude Include="GPUPrefixSumBase.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="UtilityKernels.h">

@@ -168,9 +168,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChainedScanDecoupledLookback.h" />
-    <ClInclude Include="ComputeShader.h" />
+    <ClInclude Include="ComputeKernelBase.h" />
     <ClInclude Include="CSDLKernels.h" />
-    <ClInclude Include="GPUPrefixSummer.h" />
+    <ClInclude Include="GPUPrefixSumBase.h" />
     <ClInclude Include="GPUPrefixSums.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="ReduceThenScan.h" />

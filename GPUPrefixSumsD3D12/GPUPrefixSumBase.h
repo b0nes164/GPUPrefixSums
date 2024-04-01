@@ -12,7 +12,7 @@
 #include "Utils.h"
 #include "UtilityKernels.h"
 
-class GPUPrefixSummer
+class GPUPrefixSumBase
 {
 protected:
 	const char* k_scanName;
@@ -25,7 +25,7 @@ protected:
 	uint32_t m_partitions;
 
 	winrt::com_ptr<ID3D12Device> m_device;
-	DeviceInfo m_devInfo{};
+	GPUPrefixSums::DeviceInfo m_devInfo{};
 	std::vector<std::wstring> m_compileArguments;
 
 	winrt::com_ptr<ID3D12GraphicsCommandList> m_cmdList;
@@ -60,13 +60,17 @@ protected:
 		RAND_EXCLUSIVE = 3
 	};
 
-	GPUPrefixSummer(
+	GPUPrefixSumBase(
 		const char* scanName,
 		uint32_t partitionSize,
 		uint32_t maxReadBack) :
 		k_scanName(scanName),
 		k_partitionSize(partitionSize),
 		k_maxReadBack(maxReadBack)
+	{
+	};
+
+	~GPUPrefixSumBase()
 	{
 	};
 
@@ -159,7 +163,7 @@ public:
 
 	void TestAll()
 	{
-		printf("Beggining ");
+		printf("\nBeginning ");
 		printf(k_scanName);
 		printf("test all.\n");
 
@@ -183,15 +187,15 @@ public:
 		const uint32_t testsExpected = (k_partitionSize + 5) * 2;
 		printf(k_scanName);
 		if (testsPassed == testsExpected)
-			printf(" %u/%u ALL TESTS PASSED", testsPassed, testsExpected);
+			printf(" %u/%u ALL TESTS PASSED\n", testsPassed, testsExpected);
 		else
-			printf(" %u/%u TEST FAILED", testsPassed, testsExpected);
+			printf(" %u/%u TEST FAILED\n", testsPassed, testsExpected);
 	}
 
 	void BatchTimingInclusiveInitOne(uint32_t inputSize, uint32_t batchSize)
 	{
 		UpdateSize(inputSize, ValidationType::ONE_INCLUSIVE);
-		printf("Beginning ");
+		printf("\nBeginning ");
 		printf(k_scanName);
 		PrintScanTestType(ValidationType::ONE_INCLUSIVE);
 		printf("batch timing test at:\n");
@@ -217,6 +221,7 @@ public:
 protected:
 	void Initialize()
 	{
+		InitUtilityShaders();
 		InitComputeShaders();
 
 		D3D12_COMMAND_QUEUE_DESC desc{};
@@ -236,6 +241,20 @@ protected:
 		winrt::check_hresult(m_cmdQueue->GetTimestampFrequency(&m_timestampFrequency));
 
 		InitStaticBuffers();
+	}
+	
+	virtual void InitUtilityShaders()
+	{
+		const std::filesystem::path path = "Shaders/Utility.hlsl";
+		m_initOne = new UtilityKernels::InitOne(m_device, m_devInfo, m_compileArguments, path);
+		m_initRandom = new UtilityKernels::InitRandom(m_device, m_devInfo, m_compileArguments, path);
+		m_clearErrorCount = new UtilityKernels::ClearErrorCount(m_device, m_devInfo, m_compileArguments, path);
+		m_validateOneExclusive = new UtilityKernels::ValidateOneExclusive(m_device, m_devInfo, m_compileArguments, path);
+		m_validateOneInclusive = new UtilityKernels::ValidateOneInclusive(m_device, m_devInfo, m_compileArguments, path);
+		m_validateRandomExclusive =
+			new UtilityKernels::ValidateRandomExclusive(m_device, m_devInfo, m_compileArguments, path);
+		m_validateRandomInclusive =
+			new UtilityKernels::ValidateRandomInclusive(m_device, m_devInfo, m_compileArguments, path);
 	}
 
 	virtual void InitComputeShaders() = 0;

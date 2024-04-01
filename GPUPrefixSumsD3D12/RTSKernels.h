@@ -8,7 +8,7 @@
  ******************************************************************************/
 #pragma once
 #include "pch.h"
-#include "ComputeShader.h"
+#include "ComputeKernelBase.h"
 
 namespace RTSKernels
 {
@@ -18,27 +18,22 @@ namespace RTSKernels
         ThreadBlockReduction = 1,
     };
 
-    class Reduce
+    class Reduce : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         Reduce(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
-            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/ReduceThenScan.hlsl",
+                shaderPath,
                 L"Reduce",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
@@ -49,124 +44,149 @@ namespace RTSKernels
             const uint32_t& threadBlocks)
         {
             std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
             cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
             cmdList->Dispatch(threadBlocks, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParams = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
+            rootParams[0].InitAsConstants(4, 0);
+            rootParams[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            rootParams[2].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
+            return rootParams;
+        }
     };
 
-    class Scan
+    class Scan : public ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         Scan(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
-        {
-            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(2);
-            rootParameters[0].InitAsConstants(4, 0);
-            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
-
-            shader = new ComputeShader(
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
                 device,
                 info,
-                "Shaders/ReduceThenScan.hlsl",
+                shaderPath,
                 L"Scan",
                 compileArguments,
-                rootParameters);
+                CreateRootParameters())
+        {
         }
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
             const uint32_t& threadBlocks)
         {
             std::array<uint32_t, 4> t = { 0, threadBlocks, 0, 0 };
-            shader->SetPipelineState(cmdList);
+            SetPipelineState(cmdList);
             cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
             cmdList->SetComputeRootUnorderedAccessView(1, threadBlockReductionBuffer);
             cmdList->Dispatch(1, 1, 1);
         }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(2);
+            rootParameters[0].InitAsConstants(4, 0);
+            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
+            return rootParameters;
+        }
     };
 
-    class DownSweepInclusive
+    class DownSweepInclusive : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         DownSweepInclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"DownsweepInclusive",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
+            const uint32_t& vectorizedSize,
+            const uint32_t& threadBlocks)
+        {
+            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+            cmdList->Dispatch(threadBlocks, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
         {
             auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
             rootParameters[0].InitAsConstants(4, 0);
             rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
             rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
-
-            shader = new ComputeShader(
-                device,
-                info,
-                "Shaders/ReduceThenScan.hlsl",
-                L"DownsweepInclusive",
-                compileArguments,
-                rootParameters);
-        }
-
-        void Dispatch(
-            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
-            const uint32_t& vectorizedSize,
-            const uint32_t& threadBlocks)
-        {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            shader->SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            return rootParameters;
         }
     };
 
-    class DownSweepExclusive
+    class DownSweepExclusive : ComputeKernelBase
     {
-        ComputeShader* shader;
     public:
         DownSweepExclusive(
             winrt::com_ptr<ID3D12Device> device,
-            DeviceInfo const& info,
-            std::vector<std::wstring> compileArguments)
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"DownsweepExclusive",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
+            const uint32_t& vectorizedSize,
+            const uint32_t& threadBlocks)
+        {
+            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+            cmdList->Dispatch(threadBlocks, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
         {
             auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(3);
             rootParameters[0].InitAsConstants(4, 0);
             rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
             rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
-
-            shader = new ComputeShader(
-                device,
-                info,
-                "Shaders/ReduceThenScan.hlsl",
-                L"DownsweepExclusive",
-                compileArguments,
-                rootParameters);
-        }
-
-        void Dispatch(
-            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
-            const uint32_t& vectorizedSize,
-            const uint32_t& threadBlocks)
-        {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            shader->SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            return rootParameters;
         }
     };
 }

@@ -14,9 +14,9 @@
 extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 613; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
 
-DeviceInfo GetDeviceInfo(ID3D12Device* device)
+GPUPrefixSums::DeviceInfo GetDeviceInfo(ID3D12Device* device)
 {
-    DeviceInfo devInfo = {};
+    GPUPrefixSums::DeviceInfo devInfo = {};
     auto adapterLuid = device->GetAdapterLuid();
     winrt::com_ptr<IDXGIFactory4> factory;
     winrt::check_hresult(CreateDXGIFactory2(0, IID_PPV_ARGS(factory.put())));
@@ -28,6 +28,8 @@ DeviceInfo GetDeviceInfo(ID3D12Device* device)
     winrt::check_hresult(adapter->GetDesc1(&adapterDesc));
 
     devInfo.Description = adapterDesc.Description;
+    devInfo.dedicatedVideoMemory = adapterDesc.DedicatedVideoMemory;
+    devInfo.sharedSystemMemory = adapterDesc.SharedSystemMemory;
 
     bool isWarpDevice = ((adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == DXGI_ADAPTER_FLAG_SOFTWARE) ||
         (_wcsicmp(adapterDesc.Description, L"Microsoft Basic Render Driver") == 0);
@@ -105,7 +107,7 @@ int main()
 {
     winrt::com_ptr<ID3D12Device> device = InitDevice();
     //winrt::com_ptr<ID3D12Device> device = InitDeviceWarp();
-    DeviceInfo deviceInfo = GetDeviceInfo(device.get());
+    GPUPrefixSums::DeviceInfo deviceInfo = GetDeviceInfo(device.get());
 
     ChainedScanDecoupledLookback* csdl =
         new ChainedScanDecoupledLookback(

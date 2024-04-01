@@ -9,10 +9,10 @@
 #pragma once
 #include "pch.h"
 #include "GPUPrefixSums.h"
-#include "GPUPrefixSummer.h"
+#include "GPUPrefixSumBase.h"
 #include "CSDLKernels.h"
 
-class ChainedScanDecoupledLookback : public GPUPrefixSummer
+class ChainedScanDecoupledLookback : public GPUPrefixSumBase
 {
 	winrt::com_ptr<ID3D12Resource> m_indexBuffer;
 
@@ -23,7 +23,7 @@ class ChainedScanDecoupledLookback : public GPUPrefixSummer
 public:
 	ChainedScanDecoupledLookback(
 		winrt::com_ptr<ID3D12Device> _device,
-		DeviceInfo _deviceInfo);
+		GPUPrefixSums::DeviceInfo _deviceInfo);
 
 	~ChainedScanDecoupledLookback();
 
