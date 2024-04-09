@@ -6,6 +6,7 @@
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
+#define MAX_DISPATCH_DIM    65535U
 #define UINT4_PART_SIZE     768U
 #define BLOCK_DIM           256U
 #define UINT4_PER_THREAD    3U
@@ -15,8 +16,8 @@ cbuffer cbPrefixSum : register(b0)
 {
     uint e_vectorizedSize;
     uint e_threadBlocks;
-    uint padding0;
-    uint padding1;
+    uint e_isPartial;
+    uint e_fullDispatches;
 };
 
 RWStructuredBuffer<uint4> b_scan : register(u0);
@@ -27,6 +28,18 @@ groupshared uint g_reduction[BLOCK_DIM / MIN_WAVE_SIZE];
 inline uint getWaveIndex(uint _gtid)
 {
     return _gtid / WaveGetLaneCount();
+}
+
+inline bool isPartialDispatch()
+{
+    return e_isPartial;
+}
+
+inline uint flattenGid(uint3 gid)
+{
+    return isPartialDispatch() ?
+        gid.x + e_fullDispatches * MAX_DISPATCH_DIM :
+        gid.x + gid.y * MAX_DISPATCH_DIM;
 }
 
 inline uint PartStart(uint _partIndex)

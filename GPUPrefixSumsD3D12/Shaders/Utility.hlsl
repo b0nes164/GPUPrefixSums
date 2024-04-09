@@ -12,7 +12,6 @@ RWStructuredBuffer<uint> b_scan             : register(u0);
 RWStructuredBuffer<uint> b_scanValidation   : register(u1);
 RWStructuredBuffer<uint> b_errorCount       : register(u2);
 
-
 cbuffer cbPrefixSum : register(b0)
 {
     uint e_size;

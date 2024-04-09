@@ -236,18 +236,20 @@ inline void ThreadBlockScanPartialWLT16(uint gtid, uint reduction, uint laneMask
 [numthreads(BLOCK_DIM, 1, 1)]
 void Reduce(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 {
-    if(gid.x < e_threadBlocks - 1)
-        WaveReduceFull(gtid.x, gid.x);
+    const uint flattenedGid = flattenGid(gid);
     
-    if (gid.x == e_threadBlocks - 1)
-        WaveReducePartial(gtid.x, gid.x);
+    if (flattenedGid < e_threadBlocks - 1)
+        WaveReduceFull(gtid.x, flattenedGid);
+    
+    if (flattenedGid == e_threadBlocks - 1)
+        WaveReducePartial(gtid.x, flattenedGid);
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalReduceWGE16(gtid.x, gid.x);
+        LocalReduceWGE16(gtid.x, flattenedGid);
     
     if (WaveGetLaneCount() < 16)
-        LocalReduceWLT16(gtid.x, gid.x);
+        LocalReduceWLT16(gtid.x, flattenedGid);
 }
 
 [numthreads(BLOCK_DIM, 1, 1)]
@@ -272,56 +274,60 @@ void Scan(uint3 gtid : SV_GroupThreadID)
 [numthreads(BLOCK_DIM, 1, 1)]
 void DownsweepInclusive(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 {
-    if(gid.x < e_threadBlocks - 1)
-        ScanInclusiveFull(gtid.x, gid.x);
+    const uint flattenedGid = flattenGid(gid);
     
-    if(gid.x == e_threadBlocks - 1)
-        ScanInclusivePartial(gtid.x, gid.x);
+    if (flattenedGid < e_threadBlocks - 1)
+        ScanInclusiveFull(gtid.x, flattenedGid);
     
-    uint prevReduction = gid.x ? b_threadBlockReduction[gid.x - 1] : 0;
+    if (flattenedGid == e_threadBlocks - 1)
+        ScanInclusivePartial(gtid.x, flattenedGid);
+    
+    uint prevReduction = flattenedGid ? b_threadBlockReduction[flattenedGid - 1] : 0;
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, gid.x);
+        LocalScanInclusiveWGE16(gtid.x, flattenedGid);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, gid.x);
+        LocalScanInclusiveWLT16(gtid.x, flattenedGid);
     GroupMemoryBarrierWithGroupSync();
     
     prevReduction += gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0;
     
     
-    if (gid.x < e_threadBlocks - 1)
-        DownSweepFull(gtid.x, gid.x, prevReduction);
+    if (flattenedGid < e_threadBlocks - 1)
+        DownSweepFull(gtid.x, flattenedGid, prevReduction);
     
-    if (gid.x == e_threadBlocks - 1)
-        DownSweepPartial(gtid.x, gid.x, prevReduction);
+    if (flattenedGid == e_threadBlocks - 1)
+        DownSweepPartial(gtid.x, flattenedGid, prevReduction);
 }
 
 [numthreads(BLOCK_DIM, 1, 1)]
 void DownsweepExclusive(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 {
-    if (gid.x < e_threadBlocks - 1)
-        ScanExclusiveFull(gtid.x, gid.x);
+    const uint flattenedGid = flattenGid(gid);
     
-    if (gid.x == e_threadBlocks - 1)
-        ScanExclusivePartial(gtid.x, gid.x);
+    if (flattenedGid < e_threadBlocks - 1)
+        ScanExclusiveFull(gtid.x, flattenedGid);
     
-    uint prevReduction = gid.x ? b_threadBlockReduction[gid.x - 1] : 0;
+    if (flattenedGid == e_threadBlocks - 1)
+        ScanExclusivePartial(gtid.x, flattenedGid);
+    
+    uint prevReduction = flattenedGid ? b_threadBlockReduction[flattenedGid - 1] : 0;
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, gid.x);
+        LocalScanInclusiveWGE16(gtid.x, flattenedGid);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, gid.x);
+        LocalScanInclusiveWLT16(gtid.x, flattenedGid);
     GroupMemoryBarrierWithGroupSync();
     
     prevReduction += gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0;
     
-    if (gid.x < e_threadBlocks - 1)
-        DownSweepFull(gtid.x, gid.x, prevReduction);
+    if (flattenedGid < e_threadBlocks - 1)
+        DownSweepFull(gtid.x, flattenedGid, prevReduction);
     
-    if (gid.x == e_threadBlocks - 1)
-        DownSweepPartial(gtid.x, gid.x, prevReduction);
+    if (flattenedGid == e_threadBlocks - 1)
+        DownSweepPartial(gtid.x, flattenedGid, prevReduction);
 }

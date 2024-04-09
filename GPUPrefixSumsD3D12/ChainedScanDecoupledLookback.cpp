@@ -77,7 +77,7 @@ void ChainedScanDecoupledLookback::PrepareScanCmdListInclusive()
 		m_cmdList,
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_indexBuffer->GetGPUVirtualAddress(),
-		m_threadBlockReductionBuffer->GetGPUVirtualAddress(),
+		m_threadBlockReductionBuffer,
 		m_vectorizedSize,
 		m_partitions);
 }
@@ -96,7 +96,7 @@ void ChainedScanDecoupledLookback::PrepareScanCmdListExclusive()
 		m_cmdList,
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_indexBuffer->GetGPUVirtualAddress(),
-		m_threadBlockReductionBuffer->GetGPUVirtualAddress(),
+		m_threadBlockReductionBuffer,
 		m_vectorizedSize,
 		m_partitions);
 }

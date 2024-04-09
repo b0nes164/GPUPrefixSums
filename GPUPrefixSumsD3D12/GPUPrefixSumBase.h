@@ -394,7 +394,9 @@ protected:
 		UAVBarrierSingle(m_cmdList, m_errorCountBuffer);
 		ExecuteCommandList();
 
+		ReadbackPreBarrier(m_cmdList, m_errorCountBuffer);
 		m_cmdList->CopyBufferRegion(m_readBackBuffer.get(), 0, m_errorCountBuffer.get(), 0, sizeof(uint32_t));
+		ReadbackPostBarrier(m_cmdList, m_errorCountBuffer);
 		ExecuteCommandList();
 		std::vector<uint32_t> vecOut = ReadBackBuffer(m_readBackBuffer, 1);
 		uint32_t errCount = vecOut[0];

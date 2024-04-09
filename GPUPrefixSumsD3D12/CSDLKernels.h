@@ -39,8 +39,8 @@ namespace CSDLKernels
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS indexBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& indexBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
             const uint32_t& threadBlocks)
         {
             std::array<uint32_t, 4> t = { 0, threadBlocks, 0, 0 };
@@ -80,21 +80,54 @@ namespace CSDLKernels
         {
         }
 
+        //Setting the bitPartition flag is unecessary for CSDL, but splitting
+        //the dispatches is still necessary
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS indexBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& indexBuffer,
+            winrt::com_ptr<ID3D12Resource> threadBlockReductionBuffer,
             const uint32_t& vectorizedSize,
             const uint32_t& threadBlocks)
         {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(3, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            const uint32_t fullBlocks = threadBlocks / k_maxDim;
+            if (fullBlocks)
+            {
+                std::array<uint32_t, 4> t = { 
+                    vectorizedSize,
+                    threadBlocks,
+                    0,
+                    0 };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(3,
+                    threadBlockReductionBuffer->GetGPUVirtualAddress());
+                cmdList->Dispatch(k_maxDim, fullBlocks, 1);
+
+                //To stop unecessary spinning of the lookback, add a barrier here on the reductions 
+                //As threadblocks in the second dispatch are dependent on the first dispatch
+                UAVBarrierSingle(cmdList, threadBlockReductionBuffer);
+            }
+
+            const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
+            if (partialBlocks)
+            {
+                std::array<uint32_t, 4> t = { 
+                    vectorizedSize,
+                    threadBlocks,
+                    0,
+                    0 };
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(3,
+                    threadBlockReductionBuffer->GetGPUVirtualAddress());
+                cmdList->Dispatch(partialBlocks, 1, 1);
+            }
         }
 
     protected:
@@ -127,21 +160,54 @@ namespace CSDLKernels
         {
         }
 
+        //Setting the bitPartition flag is unecessary for CSDL, but splitting
+        //the dispatches is still necessary
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS indexBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& indexBuffer,
+            winrt::com_ptr<ID3D12Resource> threadBlockReductionBuffer,
             const uint32_t& vectorizedSize,
             const uint32_t& threadBlocks)
         {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(3, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            const uint32_t fullBlocks = threadBlocks / k_maxDim;
+            if (fullBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    0,
+                    0 };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(3,
+                    threadBlockReductionBuffer->GetGPUVirtualAddress());
+                cmdList->Dispatch(k_maxDim, fullBlocks, 1);
+
+                //To stop unecessary spinning of the lookback, add a barrier here on the reductions 
+                //As threadblocks in the second dispatch are dependent on the first dispatch
+                UAVBarrierSingle(cmdList, threadBlockReductionBuffer);
+            }
+
+            const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
+            if (partialBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    0,
+                    0 };
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(3,
+                    threadBlockReductionBuffer->GetGPUVirtualAddress());
+                cmdList->Dispatch(partialBlocks, 1, 1);
+            }
         }
 
     protected:

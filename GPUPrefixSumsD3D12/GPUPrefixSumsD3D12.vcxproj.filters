@@ -30,6 +30,9 @@
     <ClCompile Include="ReduceThenScan.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Survey.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GPUPrefixSums.h">
@@ -60,6 +63,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ReduceThenScan.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SurveyKernels.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SurveyKernelBase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Survey.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

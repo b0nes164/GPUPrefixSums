@@ -165,6 +165,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="ReduceThenScan.cpp" />
+    <ClCompile Include="Survey.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChainedScanDecoupledLookback.h" />
@@ -175,6 +176,9 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="ReduceThenScan.h" />
     <ClInclude Include="RTSKernels.h" />
+    <ClInclude Include="Survey.h" />
+    <ClInclude Include="SurveyKernelBase.h" />
+    <ClInclude Include="SurveyKernels.h" />
     <ClInclude Include="UtilityKernels.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>

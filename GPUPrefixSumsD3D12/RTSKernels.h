@@ -38,17 +38,42 @@ namespace RTSKernels
 
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
-            D3D12_GPU_VIRTUAL_ADDRESS scanBuffer,
-            D3D12_GPU_VIRTUAL_ADDRESS threadBlockReductionBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
             const uint32_t& vectorizedSize,
             const uint32_t& threadBlocks)
         {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            const uint32_t fullBlocks = threadBlocks / k_maxDim;
+            if (fullBlocks)
+            {
+                std::array<uint32_t, 4> t = { 
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isNotPartialBitFlag,
+                    0 };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(k_maxDim, fullBlocks, 1);
+            }
+
+            const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
+            if (partialBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isPartialBitFlag,
+                    fullBlocks };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(partialBlocks, 1, 1);
+            }
         }
 
     protected:
@@ -127,12 +152,36 @@ namespace RTSKernels
             const uint32_t& vectorizedSize,
             const uint32_t& threadBlocks)
         {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            const uint32_t fullBlocks = threadBlocks / k_maxDim;
+            if (fullBlocks)
+            {
+                std::array<uint32_t, 4> t = { 
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isNotPartialBitFlag,
+                    0 };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(k_maxDim, fullBlocks, 1);
+            }
+            
+            const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
+            if (partialBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isPartialBitFlag,
+                    fullBlocks };
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(partialBlocks, 1, 1);
+            }
         }
 
     protected:
@@ -171,12 +220,36 @@ namespace RTSKernels
             const uint32_t& vectorizedSize,
             const uint32_t& threadBlocks)
         {
-            std::array<uint32_t, 4> t = { vectorizedSize, threadBlocks, 0, 0 };
-            SetPipelineState(cmdList);
-            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
-            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
-            cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
-            cmdList->Dispatch(threadBlocks, 1, 1);
+            const uint32_t fullBlocks = threadBlocks / k_maxDim;
+            if (fullBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isNotPartialBitFlag,
+                    0 };
+
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(k_maxDim, fullBlocks, 1);
+            }
+
+            const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
+            if (partialBlocks)
+            {
+                std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    k_isPartialBitFlag,
+                    fullBlocks };
+                SetPipelineState(cmdList);
+                cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+                cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+                cmdList->SetComputeRootUnorderedAccessView(2, threadBlockReductionBuffer);
+                cmdList->Dispatch(partialBlocks, 1, 1);
+            }
         }
 
     protected:
