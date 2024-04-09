@@ -444,4 +444,76 @@ namespace SurveyKernels
         {
         }
     };
+
+    class BlockRakingReduceIntrinsicInclusive : public SurveyKernelBase
+    {
+    public:
+        BlockRakingReduceIntrinsicInclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"BlockRakingReduceIntrinsicInclusive")
+        {
+        }
+    };
+
+    class BlockRakingReduceIntrinsicExclusive : public SurveyKernelBase
+    {
+    public:
+        BlockRakingReduceIntrinsicExclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"BlockRakingReduceIntrinsicExclusive")
+        {
+        }
+    };
+
+    class SharedBrentKungFusedIntrinsicInclusive : public SurveyKernelBase
+    {
+    public:
+        SharedBrentKungFusedIntrinsicInclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"SharedBrentKungFusedIntrinsicInclusive")
+        {
+        }
+    };
+
+    class SharedBrentKungFusedIntrinsicExclusive : public SurveyKernelBase
+    {
+    public:
+        SharedBrentKungFusedIntrinsicExclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"SharedBrentKungFusedIntrinsicExclusive")
+        {
+        }
+    };
 }

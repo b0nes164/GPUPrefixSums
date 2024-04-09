@@ -60,7 +60,7 @@ class Survey
     SurveyKernels::WaveRakingReduceInclusive* m_waveRakingReduceInclusive;
     SurveyKernels::WaveRakingReduceExclusive* m_waveRakingReduceExclusive;
 
-    //Block Level Without Wave Intrinsics
+    //Block Level without Wave Intrinsics
     SurveyKernels::BlockKoggeStoneInclusive* m_blockKoggeStoneInclusive;
     SurveyKernels::BlockKoggeStoneExclusive* m_blockKoggeStoneExclusive;
 
@@ -73,7 +73,7 @@ class Survey
     SurveyKernels::BlockReduceScanInclusive* m_blockReduceScanInclusive;
     SurveyKernels::BlockReduceScanExclusive* m_blockReduceScanExclusive;
 
-    //Block Level With Wave Intrinsics
+    //Block Level with Wave Intrinsics
     SurveyKernels::BlockBrentKungIntrinsicInclusive* m_blockBrentKungIntrinsicInclusive;
     SurveyKernels::BlockBrentKungIntrinsicExclusive* m_blockBrentKungIntrinsicExclusive;
 
@@ -82,6 +82,13 @@ class Survey
     SurveyKernels::BlockSklanskyIntrinsicInclusive* m_blockSklanskyIntrinsicInclusive;
     SurveyKernels::BlockSklanskyIntrinsicInclusiveAlt* m_blockSklanskyIntrinsicInclusiveAlt;
     SurveyKernels::BlockSklanskyIntrinsicExclusive* m_blockSklanskyIntrinsicExclusive;
+    
+    SurveyKernels::BlockRakingReduceIntrinsicInclusive* m_blockRakingReduceIntrinsicInclusive;
+    SurveyKernels::BlockRakingReduceIntrinsicExclusive* m_blockRakingReduceIntrinsicExclusive;
+
+    //Block Level with Shared Memory and Wave Intrinsics
+    SurveyKernels::SharedBrentKungFusedIntrinsicInclusive* m_sharedBrentKungFusedIntrinsicInclusive;
+    SurveyKernels::SharedBrentKungFusedIntrinsicExclusive* m_sharedBrentKungFusedIntrinsicExclusive;
 
 public:
     Survey(
@@ -128,6 +135,13 @@ public:
     bool TestBlockSklanskyIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation);
     bool TestBlockSklanskyIntrinsicInclusiveAlt(bool shouldPrint, bool shouldPrintValidation);
     bool TestBlockSklanskyIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation);
+
+    bool TestBlockRakingReduceIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation);
+    bool TestBlockRakingReduceIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation);
+
+    //Shared
+    bool TestSharedBrentKungFusedIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation);
+    bool TestSharedBrentKungFusedIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation);
 
     void TestAll();
 

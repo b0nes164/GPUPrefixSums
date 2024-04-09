@@ -205,11 +205,11 @@ inline void LocalScanInclusiveWLT16(uint gtid, uint partIndex)
         if (gtid < (scanSize >> offset))
         {
             g_reduction[((gtid + 1) << offset) - 1] +=
-                    WavePrefixSum(g_reduction[((gtid + 1) << offset) - 1]);
+                WavePrefixSum(g_reduction[((gtid + 1) << offset) - 1]);
         }
         GroupMemoryBarrierWithGroupSync();
             
-        if ((gtid & ((j << laneLog) - 1)) >= j && (gtid + 1) & ((1 << offset) - 1))
+        if ((gtid & ((j << laneLog) - 1)) >= j && (gtid + 1) & (j - 1))
         {
             g_reduction[gtid] +=
                 WaveReadLaneAt(g_reduction[((gtid >> offset) << offset) - 1], 0);

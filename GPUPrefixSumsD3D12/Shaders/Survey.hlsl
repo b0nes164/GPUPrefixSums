@@ -515,12 +515,15 @@ void BlockBrentKungIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
     offset = laneLog;
     for (uint j = 1 << laneLog; j < e_size; j <<= laneLog)
     {
-        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x + 1 & j - 1) != 0)
+        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x + 1 & j - 1))
             b_prefixSum[gtid.x] += b_prefixSum[((gtid.x >> offset) << offset) - 1];
+        DeviceMemoryBarrierWithGroupSync();
         offset += laneLog;
     }
 }
 
+//Note, this only works when the inputSize <= WaveGetLaneCount() * WaveGetLaneCount()
+//At the current input, will fail on WaveGetLaneCount() 4 and 8
 [numthreads(GROUP_SIZE, 1, 1)]
 void BlockBrentKungIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
 {
@@ -538,19 +541,24 @@ void BlockBrentKungIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
     
     //Downsweep
     //Warp-sized radix propogation fans
-    offset = laneLog;
-    for (uint j = e_size >> laneLog ; j >= WaveGetLaneCount(); j >>= laneLog)
+    for (uint j = 1 << offset; j >= WaveGetLaneCount(); j >>= laneLog)
     {
         uint prev;
-        if ((gtid.x & (j << laneLog) - 1) >= j)
+        uint shuffleUp;
+        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x >> offset))
+        {
             prev = b_prefixSum[((gtid.x >> offset) << offset) - 1];
+            
+            if (gtid.x < (j << laneLog))
+                shuffleUp = ((gtid.x & (j - 1)) ? b_prefixSum[gtid.x - 1] : 0) + prev;
+        }
         DeviceMemoryBarrierWithGroupSync();
         
-        if ((gtid.x & (j << laneLog) - 1) >= j)
+        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x >> offset))
         {
             if (gtid.x < (j << laneLog))
             {
-                b_prefixSum[gtid.x] = ((gtid.x & (j - 1)) != 0 ? b_prefixSum[gtid.x - 1] : 0) + prev; // move this before the barrier
+                b_prefixSum[gtid.x] = shuffleUp;
             }
             else
             {
@@ -558,7 +566,7 @@ void BlockBrentKungIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
                     b_prefixSum[gtid.x] += prev;
             }
         }
-        offset += laneLog;
+        offset -= laneLog;
     }
     
     uint prev;
@@ -582,7 +590,7 @@ void BlockBrentKungFusedIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
             b_prefixSum[(gtid.x + 1 << offset) - 1] += WavePrefixSum(b_prefixSum[(gtid.x + 1 << offset) - 1]);
         DeviceMemoryBarrierWithGroupSync();
         
-        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x + 1 & j - 1) != 0)
+        if ((gtid.x & (j << laneLog) - 1) >= j && (gtid.x + 1 & j - 1))
             b_prefixSum[gtid.x] += b_prefixSum[((gtid.x >> offset) << offset) - 1];
         offset += laneLog;
     }
@@ -676,6 +684,96 @@ void BlockSklanskyIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
         b_prefixSum[gtid.x] = gtid.x / WaveGetLaneCount() ? g_shared[gtid.x / WaveGetLaneCount() - 1] : 0;
 }
 
+//Requires GROUP_SIZE / WaveGetLaneCount() <= WaveGetLaneCount()
+//At the current input and GROUP_SIZE, will fail on WaveGetLaneCount() 4 and 8
+[numthreads(GROUP_SIZE, 1, 1)]
+void BlockRakingReduceIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
+{
+    b_prefixSum[gtid.x] += WavePrefixSum(b_prefixSum[gtid.x]);
+    DeviceMemoryBarrierWithGroupSync();
+    
+    if (gtid.x < e_size / WaveGetLaneCount())
+        b_prefixSum[(gtid.x + 1) * WaveGetLaneCount() - 1] += WavePrefixSum(b_prefixSum[(gtid.x + 1) * WaveGetLaneCount() - 1]);
+    DeviceMemoryBarrierWithGroupSync();
+    
+    const uint highestLane = WaveGetLaneCount() - 1;
+    if (WaveGetLaneIndex() != highestLane)
+        b_prefixSum[gtid.x] += gtid.x / WaveGetLaneCount() ? WaveReadLaneAt(b_prefixSum[gtid.x - 1], 0) : 0;
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void BlockRakingReduceIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
+{
+    const uint laneMask = WaveGetLaneCount() - 1;
+    const uint circularLaneShift = WaveGetLaneIndex() + laneMask & laneMask;
+
+    uint t = b_prefixSum[gtid.x];
+    t += WavePrefixSum(t);
+    b_prefixSum[gtid.x] = WaveReadLaneAt(t, circularLaneShift);
+    DeviceMemoryBarrierWithGroupSync();
+    
+    if (gtid.x < e_size / WaveGetLaneCount())
+        b_prefixSum[gtid.x * WaveGetLaneCount()] = WavePrefixSum(b_prefixSum[gtid.x * WaveGetLaneCount()]);
+    DeviceMemoryBarrierWithGroupSync();
+    
+    if(WaveGetLaneIndex())
+        b_prefixSum[gtid.x] += WaveReadLaneAt(b_prefixSum[gtid.x - 1], 1);
+}
+
 /***********************************************************************************
 * Block-level sums of size EQUAL TO to the GROUP size, using WAVE INTRINSICS and SHARED memory
 ************************************************************************************/
+[numthreads(GROUP_SIZE, 1, 1)]
+void SharedBrentKungFusedIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
+{
+    g_shared[gtid.x] = b_prefixSum[gtid.x];
+    g_shared[gtid.x] += WavePrefixSum(g_shared[gtid.x]);
+    
+    if (gtid.x < WaveGetLaneCount())
+        b_prefixSum[gtid.x] = g_shared[gtid.x];
+    GroupMemoryBarrierWithGroupSync();
+    
+    const uint laneLog = countbits(WaveGetLaneCount() - 1);
+    uint offset = laneLog;
+    uint j = WaveGetLaneCount();
+    for (; j < (e_size >> 1); j <<= laneLog)
+    {
+        if (gtid.x < (e_size >> offset))
+        {
+            g_shared[(gtid.x + 1 << offset) - 1] +=
+                WavePrefixSum(g_shared[(gtid.x + 1 << offset) - 1]);
+        }
+        DeviceMemoryBarrierWithGroupSync();
+        
+        if ((gtid.x & (j << laneLog) - 1) >= j)
+        {
+            if (gtid.x < (j << laneLog))
+            {
+                //Write out, avoid an unecessary store into shared memory
+                b_prefixSum[gtid.x] = g_shared[gtid.x] + ((gtid.x + 1) & (j - 1) ?
+                    WaveReadLaneAt(g_shared[((gtid.x >> offset) << offset) - 1], 0) : 0);
+            }
+            else
+            {
+                //Fan
+                if ((gtid.x + 1 & j - 1))
+                    g_shared[gtid.x] += WaveReadLaneAt(g_shared[((gtid.x >> offset) << offset) - 1], 0);
+            }
+        }
+        offset += laneLog;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    //If inputSize is not a power of WaveGetLaneCount()
+    const uint index = gtid.x + j;
+    if (index < e_size)
+    {
+        b_prefixSum[index] = g_shared[index] + ((index + 1) & (j - 1) ?
+            WaveReadLaneAt(g_shared[((index >> offset) << offset) - 1], 0) : 0);
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void SharedBrentKungFusedIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
+{
+}

@@ -153,13 +153,13 @@ inline uint ThreadBlockScanFullWLT16(uint gtid, uint laneMask, uint laneLog)
                 if (gtid < (j << laneLog))
                 {
                     b_threadBlockReduction[gtid + k * BLOCK_DIM] = g_scan[gtid] +
-                        ((gtid + 1) & ((1 << offset) - 1) ?
+                        ((gtid + 1) & (j - 1) ?
                         WaveReadLaneAt(g_scan[((gtid >> offset) << offset) - 1], 0) : 0) +
                         reduction;
                 }
                 else
                 {
-                    if ((gtid + 1) & ((1 << offset) - 1))
+                    if ((gtid + 1) & (j - 1))
                     {
                         g_scan[gtid] +=
                             WaveReadLaneAt(g_scan[((gtid >> offset) << offset) - 1], 0);
@@ -175,7 +175,7 @@ inline uint ThreadBlockScanFullWLT16(uint gtid, uint laneMask, uint laneLog)
         if (index < BLOCK_DIM)
         {
             b_threadBlockReduction[index + k * BLOCK_DIM] = g_scan[index] +
-                ((index + 1) & ((1 << offset) - 1) ?
+                ((index + 1) & (j - 1) ?
                 WaveReadLaneAt(g_scan[((index >> offset) << offset) - 1], 0) : 0) +
                 reduction;
         }
@@ -216,13 +216,13 @@ inline void ThreadBlockScanPartialWLT16(uint gtid, uint reduction, uint laneMask
             if (gtid < (j << laneLog))
             {
                 b_threadBlockReduction[gtid + deviceOffset] = g_scan[gtid] +
-                    ((gtid + 1) & ((1 << offset) - 1) ?
+                    ((gtid + 1) & (j - 1) ?
                     WaveReadLaneAt(g_scan[((gtid >> offset) << offset) - 1], 0) : 0) +
                     reduction;
             }
             else
             {
-                if ((gtid + 1) & ((1 << offset) - 1))
+                if ((gtid + 1) & (j - 1))
                 {
                     g_scan[gtid] +=
                         WaveReadLaneAt(g_scan[((gtid >> offset) << offset) - 1], 0);

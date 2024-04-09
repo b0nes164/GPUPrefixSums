@@ -270,6 +270,41 @@ bool Survey::TestBlockSklanskyIntrinsicExclusive(bool shouldPrint, bool shouldPr
 		shouldPrintValidation);
 }
 
+bool Survey::TestBlockRakingReduceIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanInclusive(
+		"BlockRakingReduceIntrinsicInclusive",
+		m_blockRakingReduceIntrinsicInclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestBlockRakingReduceIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanExclusive(
+		"BlockRakingReduceIntrinsicExclusive",
+		m_blockRakingReduceIntrinsicExclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestSharedBrentKungFusedIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanInclusive(
+		"SharedBrentKungFusedIntrinsicInclusive",
+		m_sharedBrentKungFusedIntrinsicInclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestSharedBrentKungFusedIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return false;
+}
+
 void Survey::TestAll()
 {
 	uint32_t testsPassed = 0;
@@ -306,13 +341,18 @@ void Survey::TestAll()
 	testsPassed += TestBlockReduceScanExclusive(false, true);
 
 	testsPassed += TestBlockBrentKungIntrinsicInclusive(false, true);
-	testsPassed += TestBlockBrentKungIntrinsicExclusive(false, true);
+	testsPassed += TestBlockBrentKungIntrinsicExclusive(false, true);		//check for min wave
 
 	testsPassed += TestBlockBrentKungFusedIntrinsicInclusive(false, true);
 
 	testsPassed += TestBlockSklanskyIntrinsicInclusive(false, true);
 	testsPassed += TestBlockSklanskyIntrinsicInclusiveAlt(false, true);
 	testsPassed += TestBlockSklanskyIntrinsicExclusive(false, true);
+
+	testsPassed += TestBlockRakingReduceIntrinsicInclusive(false, true);	//check for min wave
+	testsPassed += TestBlockRakingReduceIntrinsicExclusive(false, true);	//check for min wave
+
+	testsPassed += TestSharedBrentKungFusedIntrinsicInclusive(false, true);
 }
 
 void Survey::InitUtilityShaders()
@@ -370,6 +410,13 @@ void Survey::InitComputeShaders()
 	m_blockSklanskyIntrinsicInclusiveAlt = 
 		new SurveyKernels::BlockSklanskyIntrinsicInclusiveAlt(m_device, m_devInfo, m_compileArguments, path);
 	m_blockSklanskyIntrinsicExclusive = new SurveyKernels::BlockSklanskyIntrinsicExclusive(m_device, m_devInfo, m_compileArguments, path);
+
+	m_blockRakingReduceIntrinsicInclusive = new SurveyKernels::BlockRakingReduceIntrinsicInclusive(m_device, m_devInfo, m_compileArguments, path);
+	m_blockRakingReduceIntrinsicExclusive = new SurveyKernels::BlockRakingReduceIntrinsicExclusive(m_device, m_devInfo, m_compileArguments, path);
+
+	//Shared
+	m_sharedBrentKungFusedIntrinsicInclusive = new SurveyKernels::SharedBrentKungFusedIntrinsicInclusive(m_device, m_devInfo, m_compileArguments, path);
+	m_sharedBrentKungFusedIntrinsicExclusive = new SurveyKernels::SharedBrentKungFusedIntrinsicExclusive(m_device, m_devInfo, m_compileArguments, path);
 }
 
 void Survey::UpdateSize(uint32_t size)
@@ -550,6 +597,7 @@ bool Survey::TestScanInclusive(
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_validationInfoBuffer->GetGPUVirtualAddress(),
 		k_maxWaveSize);
+	UAVBarrierSingle(m_cmdList, m_scanBuffer);
 
 	if (shouldPrint)
 		ReadBackOutput();
@@ -574,6 +622,7 @@ bool Survey::TestScanInclusive(
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_validationInfoBuffer->GetGPUVirtualAddress(),
 		size);
+	UAVBarrierSingle(m_cmdList, m_scanBuffer);
 
 	if (shouldPrint)
 		ReadBackOutput();
@@ -597,6 +646,7 @@ bool Survey::TestScanExclusive(
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_validationInfoBuffer->GetGPUVirtualAddress(),
 		k_maxWaveSize);
+	UAVBarrierSingle(m_cmdList, m_scanBuffer);
 
 	if (shouldPrint)
 		ReadBackOutput();
@@ -621,6 +671,7 @@ bool Survey::TestScanExclusive(
 		m_scanBuffer->GetGPUVirtualAddress(),
 		m_validationInfoBuffer->GetGPUVirtualAddress(),
 		size);
+	UAVBarrierSingle(m_cmdList, m_scanBuffer);
 
 	if (shouldPrint)
 		ReadBackOutput();
