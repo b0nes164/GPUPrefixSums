@@ -1,5 +1,5 @@
 # GPU Prefix Sums
-![Prefix Sum Speed Comparison](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/f2088c9d-a3e5-4b6c-b318-4765501f9fb6)
+![GPUPrefixSums vs CUB(1)](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/9a8b15e1-4a1e-4f9c-8257-2160dbc68c63)
 
 # NOTICE THIS PROJECT IS UNDERGOING INTENSIVE REVISIONS, AND IS LIABLE TO CHANGE FREQUENTLY. The Unity portion is outdated and contains known bugs. D3D12 and CUDA should are up to date. The survey and readme are being rewritten and have been temporarily removed.
 
