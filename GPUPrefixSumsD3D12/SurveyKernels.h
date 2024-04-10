@@ -516,4 +516,76 @@ namespace SurveyKernels
         {
         }
     };
+
+    class SharedRakingReduceIntrinsicInclusive : public SurveyKernelBase
+    {
+    public:
+        SharedRakingReduceIntrinsicInclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"SharedRakingReduceIntrinsicInclusive")
+        {
+        }
+    };
+
+    class SharedRakingReduceIntrinsicExclusive : public SurveyKernelBase
+    {
+    public:
+        SharedRakingReduceIntrinsicExclusive(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"SharedRakingReduceIntrinsicExclusive")
+        {
+        }
+    };
+
+    class TrueBlockInclusiveScan : public SurveyKernelBase
+    {
+    public:
+        TrueBlockInclusiveScan(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"TrueBlockInclusiveScan")
+        {
+        }
+    };
+
+    class TrueBlockExclusiveScan : public SurveyKernelBase
+    {
+    public:
+        TrueBlockExclusiveScan(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            SurveyKernelBase(
+                device,
+                info,
+                compileArguments,
+                shaderPath,
+                L"TrueBlockExclusiveScan")
+        {
+        }
+    };
 }

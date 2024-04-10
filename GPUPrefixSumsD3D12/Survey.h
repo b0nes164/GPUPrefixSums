@@ -90,6 +90,13 @@ class Survey
     SurveyKernels::SharedBrentKungFusedIntrinsicInclusive* m_sharedBrentKungFusedIntrinsicInclusive;
     SurveyKernels::SharedBrentKungFusedIntrinsicExclusive* m_sharedBrentKungFusedIntrinsicExclusive;
 
+    SurveyKernels::SharedRakingReduceIntrinsicInclusive* m_sharedRakingReduceIntrinsicInclusive;
+    SurveyKernels::SharedRakingReduceIntrinsicExclusive* m_sharedRakingReduceIntrinsicExclusive;
+
+    //True Block Level Sums, combining all previous techniques
+    SurveyKernels::TrueBlockInclusiveScan* m_trueBlockInclusiveScan;
+    SurveyKernels::TrueBlockExclusiveScan* m_trueBlockExclusiveScan;
+
 public:
     Survey(
         winrt::com_ptr<ID3D12Device> _device,
@@ -142,6 +149,13 @@ public:
     //Shared
     bool TestSharedBrentKungFusedIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation);
     bool TestSharedBrentKungFusedIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation);
+
+    bool TestSharedRakingReduceIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation);
+    bool TestSharedRakingReduceIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation);
+
+    //True
+    bool TestTrueBlockInclusiveScan(bool shouldPrint, bool shouldPrintValidation);
+    bool TestTrueBlockExclusiveScan(bool shouldPrint, bool shouldPrintValidation);
 
     void TestAll();
 

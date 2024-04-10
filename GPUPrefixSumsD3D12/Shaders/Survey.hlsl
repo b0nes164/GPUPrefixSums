@@ -46,14 +46,14 @@ inline void WriteValidationInfo(uint gtid, uint size)
 /***********************************************************************************
 * SERIAL prefix sums, using a single thread
 ************************************************************************************/
-[numthreads(1,1,1)]
+[numthreads(1, 1, 1)]
 void SerialInclusive(uint3 gtid : SV_GroupThreadID)
 {
     for (uint i = 1; i < e_size; ++i)
         b_prefixSum[i] += b_prefixSum[i - 1];
 }
 
-[numthreads(1,1,1)]
+[numthreads(1, 1, 1)]
 void SerialExclusive(uint3 gtid : SV_GroupThreadID)
 {
     uint prev = 0;
@@ -743,7 +743,7 @@ void SharedBrentKungFusedIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
             g_shared[(gtid.x + 1 << offset) - 1] +=
                 WavePrefixSum(g_shared[(gtid.x + 1 << offset) - 1]);
         }
-        DeviceMemoryBarrierWithGroupSync();
+        GroupMemoryBarrierWithGroupSync();
         
         if ((gtid.x & (j << laneLog) - 1) >= j)
         {
@@ -776,4 +776,308 @@ void SharedBrentKungFusedIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
 [numthreads(GROUP_SIZE, 1, 1)]
 void SharedBrentKungFusedIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
 {
+    g_shared[gtid.x] = b_prefixSum[gtid.x];
+    g_shared[gtid.x] += WavePrefixSum(g_shared[gtid.x]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    const uint laneLog = countbits(WaveGetLaneCount() - 1);
+    uint offset = laneLog;
+    uint j = WaveGetLaneCount();
+    for (; j < (e_size >> 1); j <<= laneLog)
+    {
+        if (gtid.x < (e_size >> offset))
+        {
+            g_shared[(gtid.x + 1 << offset) - 1] +=
+                WavePrefixSum(g_shared[(gtid.x + 1 << offset) - 1]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+        if ((gtid.x & (j << laneLog) - 1) >= j)
+        {
+            if (gtid.x < (j << laneLog))
+            {
+                //Write out, avoid an unecessary store into shared memory
+                b_prefixSum[gtid.x] = ((gtid.x & (j - 1)) ? g_shared[gtid.x - 1] : 0) +
+                    WaveReadLaneAt(g_shared[((gtid.x >> offset) << offset) - 1], 0);
+            }
+            else
+            {
+                //Fan
+                if ((gtid.x + 1 & j - 1))
+                    g_shared[gtid.x] += WaveReadLaneAt(g_shared[((gtid.x >> offset) << offset) - 1], 0);
+            }
+        }
+        offset += laneLog;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    
+    //If inputSize is not a power of WaveGetLaneCount()
+    const uint index = gtid.x + j;
+    if (index < e_size)
+    {
+        b_prefixSum[index] = ((index & (j - 1)) ? g_shared[index - 1] : 0) +
+            WaveReadLaneAt(g_shared[((index >> offset) << offset) - 1], 0);
+    }
+    
+    if (gtid.x < WaveGetLaneCount())
+        b_prefixSum[gtid.x] = gtid.x ? g_shared[gtid.x - 1] : 0;
+}
+
+//Requires GROUP_SIZE / WaveGetLaneCount() <= WaveGetLaneCount()
+//At the current input and GROUP_SIZE, will fail on WaveGetLaneCount() 4 and 8
+[numthreads(GROUP_SIZE, 1, 1)]
+void SharedRakingReduceIntrinsicInclusive(uint3 gtid : SV_GroupThreadID)
+{
+    g_shared[gtid.x] = b_prefixSum[gtid.x];
+    g_shared[gtid.x] += WavePrefixSum(g_shared[gtid.x]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (gtid.x < e_size / WaveGetLaneCount())
+        g_shared[(gtid.x + 1) * WaveGetLaneCount() - 1] += WavePrefixSum(g_shared[(gtid.x + 1) * WaveGetLaneCount() - 1]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    const uint highestLane = WaveGetLaneCount() - 1;
+    b_prefixSum[gtid.x] = g_shared[gtid.x] + ((WaveGetLaneIndex() != highestLane && gtid.x / WaveGetLaneCount()) ?
+        WaveReadLaneAt(g_shared[gtid.x - 1], 0) : 0);
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void SharedRakingReduceIntrinsicExclusive(uint3 gtid : SV_GroupThreadID)
+{
+    const uint laneMask = WaveGetLaneCount() - 1;
+    const uint circularLaneShift = WaveGetLaneIndex() + 1 & laneMask;
+    
+    const uint t = b_prefixSum[gtid.x];;
+    g_shared[circularLaneShift + (gtid.x & ~laneMask)] = t + WavePrefixSum(t);
+    GroupMemoryBarrierWithGroupSync();
+
+    if (gtid.x < e_size / WaveGetLaneCount())
+        g_shared[gtid.x * WaveGetLaneCount()] = WavePrefixSum(g_shared[gtid.x * WaveGetLaneCount()]);
+    GroupMemoryBarrierWithGroupSync();
+    
+    b_prefixSum[gtid.x] = g_shared[gtid.x] + (WaveGetLaneIndex() ?
+        WaveReadLaneAt(g_shared[gtid.x - 1], 1) : 0);
+}
+
+/***********************************************************************************
+* True block level sum, incorporating all previous techniques create a wave size 
+* agnostic prefix sum that can accomodate any input size.
+************************************************************************************/
+#define VAL_PER_THREAD  4
+#define PARTITION_SIZE  1024
+groupshared uint g_reduction[64];
+
+inline uint getWaveIndex(uint gtid)
+{
+    return gtid / WaveGetLaneCount();
+}
+
+inline uint WavePartStart(uint gtid)
+{
+    return WaveGetLaneCount() * VAL_PER_THREAD *
+        getWaveIndex(gtid);
+}
+
+inline uint PartStart(uint partitionIndex)
+{
+    return partitionIndex * PARTITION_SIZE;
+}
+
+//Raking scan to perform the wave level prefix sum
+inline void ScanInclusiveFull(uint gtid, uint partIndex)
+{
+    uint waveReduction = 0;
+    const uint highestLane = WaveGetLaneCount() - 1;
+    
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        uint t = b_prefixSum[i + PartStart(partIndex)];
+        t += WavePrefixSum(t);
+        g_shared[i] = t + waveReduction;
+        waveReduction += WaveReadLaneAt(t, highestLane);
+    }
+
+    if (!WaveGetLaneIndex())
+        g_reduction[getWaveIndex(gtid)] = waveReduction;
+}
+
+inline void ScanInclusivePartial(uint gtid, uint partIndex)
+{
+    uint waveReduction = 0;
+    const uint highestLane = WaveGetLaneCount() - 1;
+    const uint finalPartSize = e_size - PartStart(partIndex);
+    
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        uint t = i < finalPartSize ? b_prefixSum[i + PartStart(partIndex)] : 0;
+        t += WavePrefixSum(t);
+        g_shared[i] = t + waveReduction;
+        waveReduction += WaveReadLaneAt(t, highestLane);
+    }
+
+    if (!WaveGetLaneIndex())
+        g_reduction[getWaveIndex(gtid)] = waveReduction;
+}
+
+inline void ScanExclusiveFull(uint gtid, uint partIndex)
+{
+    uint waveReduction = 0;
+    const uint laneMask = WaveGetLaneCount() - 1;
+    const uint circularLaneShift = WaveGetLaneIndex() + laneMask & laneMask;
+    
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        uint t = b_prefixSum[i + PartStart(partIndex)];
+        t = WaveReadLaneAt(t + WavePrefixSum(t), circularLaneShift);
+        g_shared[i] = (WaveGetLaneIndex() ? t : 0) + waveReduction;
+        waveReduction += WaveReadLaneAt(t, 0);
+    }
+
+    if (!WaveGetLaneIndex())
+        g_reduction[getWaveIndex(gtid)] = waveReduction;
+}
+
+inline void ScanExclusivePartial(uint gtid, uint partIndex)
+{
+    uint waveReduction = 0;
+    const uint laneMask = WaveGetLaneCount() - 1;
+    const uint circularLaneShift = WaveGetLaneIndex() + laneMask & laneMask;
+    const uint finalPartSize = e_size - PartStart(partIndex);
+    
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        uint t = i < finalPartSize ? b_prefixSum[i + PartStart(partIndex)] : 0;
+        t = WaveReadLaneAt(t + WavePrefixSum(t), circularLaneShift);
+        g_shared[i] = (WaveGetLaneIndex() ? t : 0) + waveReduction;
+        waveReduction += WaveReadLaneAt(t, 0);
+    }
+
+    if (!WaveGetLaneIndex())
+        g_reduction[getWaveIndex(gtid)] = waveReduction;
+}
+
+//Scan over the reductions
+inline void LocalScanWGE16(uint gtid)
+{
+    if (gtid < GROUP_SIZE / WaveGetLaneCount())
+        g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
+}
+
+inline void LocalScanWLT16(uint gtid)
+{
+
+}
+
+inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
+{
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        b_prefixSum[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
+    }
+}
+
+inline void DownSweepPartial(uint gtid, uint partIndex, uint prevReduction)
+{
+    const uint finalPartSize = e_size - PartStart(partIndex);
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+        k < VAL_PER_THREAD && i < finalPartSize;
+        i += WaveGetLaneCount(), ++k)
+    {
+        b_prefixSum[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
+    }
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void TrueBlockInclusiveScan(uint3 gtid : SV_GroupThreadID)
+{
+    const uint partitions = (e_size + PARTITION_SIZE - 1) / PARTITION_SIZE - 1;
+    
+    uint reduction = 0;
+    uint partitionIndex = 0;
+    for (; partitionIndex < partitions; ++partitionIndex)
+    {
+        ScanInclusiveFull(gtid.x, partitionIndex);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (WaveGetLaneCount() >= 16)
+            LocalScanWGE16(gtid.x);
+        
+        if (WaveGetLaneCount() < 16)
+            LocalScanWLT16(gtid.x);
+        GroupMemoryBarrierWithGroupSync();
+        
+        const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
+        DownSweepFull(gtid.x, partitionIndex, prevReduction);
+        
+        reduction += WaveReadLaneAt(g_reduction[GROUP_SIZE / WaveGetLaneCount() - 1], 0);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    ScanInclusivePartial(gtid.x, partitionIndex);
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (WaveGetLaneCount() >= 16)
+        LocalScanWGE16(gtid.x);
+        
+    if (WaveGetLaneCount() < 16)
+        LocalScanWLT16(gtid.x);
+    GroupMemoryBarrierWithGroupSync();
+        
+    const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
+    DownSweepPartial(gtid.x, partitionIndex, prevReduction);
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void TrueBlockExclusiveScan(uint3 gtid : SV_GroupThreadID)
+{
+    const uint partitions = (e_size + PARTITION_SIZE - 1) / PARTITION_SIZE - 1;
+    
+    uint reduction = 0;
+    uint partitionIndex = 0;
+    for (; partitionIndex < partitions; ++partitionIndex)
+    {
+        ScanExclusiveFull(gtid.x, partitionIndex);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (WaveGetLaneCount() >= 16)
+            LocalScanWGE16(gtid.x);
+        
+        if (WaveGetLaneCount() < 16)
+            LocalScanWLT16(gtid.x);
+        GroupMemoryBarrierWithGroupSync();
+        
+        const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
+        DownSweepFull(gtid.x, partitionIndex, prevReduction);
+        
+        reduction += WaveReadLaneAt(g_reduction[GROUP_SIZE / WaveGetLaneCount() - 1], 0);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    ScanExclusivePartial(gtid.x, partitionIndex);
+    GroupMemoryBarrierWithGroupSync();
+    
+    if (WaveGetLaneCount() >= 16)
+        LocalScanWGE16(gtid.x);
+        
+    if (WaveGetLaneCount() < 16)
+        LocalScanWLT16(gtid.x);
+    GroupMemoryBarrierWithGroupSync();
+        
+    const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
+    DownSweepPartial(gtid.x, partitionIndex, prevReduction);
 }

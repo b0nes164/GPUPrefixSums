@@ -302,7 +302,52 @@ bool Survey::TestSharedBrentKungFusedIntrinsicInclusive(bool shouldPrint, bool s
 
 bool Survey::TestSharedBrentKungFusedIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation)
 {
-	return false;
+	return TestScanExclusive(
+		"SharedBrentKungFusedIntrinsicExclusive",
+		m_sharedBrentKungFusedIntrinsicExclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestSharedRakingReduceIntrinsicInclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanInclusive(
+		"SharedRakingReduceIntrinsicInclusive",
+		m_sharedRakingReduceIntrinsicInclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestSharedRakingReduceIntrinsicExclusive(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanExclusive(
+		"SharedRakingReduceIntrinsicExclusive",
+		m_sharedRakingReduceIntrinsicExclusive,
+		k_groupSize,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestTrueBlockInclusiveScan(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanInclusive(
+		"TrueBlockInclusiveScan",
+		m_trueBlockInclusiveScan,
+		65536,
+		shouldPrint,
+		shouldPrintValidation);
+}
+
+bool Survey::TestTrueBlockExclusiveScan(bool shouldPrint, bool shouldPrintValidation)
+{
+	return TestScanExclusive(
+		"TrueBlockExclusiveScan",
+		m_trueBlockExclusiveScan,
+		65536,
+		shouldPrint,
+		shouldPrintValidation);
 }
 
 void Survey::TestAll()
@@ -341,7 +386,10 @@ void Survey::TestAll()
 	testsPassed += TestBlockReduceScanExclusive(false, true);
 
 	testsPassed += TestBlockBrentKungIntrinsicInclusive(false, true);
-	testsPassed += TestBlockBrentKungIntrinsicExclusive(false, true);		//check for min wave
+	if (m_devInfo.SIMDWidth >= 8)
+		testsPassed += TestBlockBrentKungIntrinsicExclusive(false, true);
+	else
+		printf("\nDevice min wave width too low for BlockBrentKungIntrinsicExclusive\n\n");
 
 	testsPassed += TestBlockBrentKungFusedIntrinsicInclusive(false, true);
 
@@ -349,10 +397,29 @@ void Survey::TestAll()
 	testsPassed += TestBlockSklanskyIntrinsicInclusiveAlt(false, true);
 	testsPassed += TestBlockSklanskyIntrinsicExclusive(false, true);
 
-	testsPassed += TestBlockRakingReduceIntrinsicInclusive(false, true);	//check for min wave
-	testsPassed += TestBlockRakingReduceIntrinsicExclusive(false, true);	//check for min wave
+	if (m_devInfo.SIMDWidth >= 8)
+		testsPassed += TestBlockRakingReduceIntrinsicInclusive(false, true);
+	else
+		printf("\nDevice min wave width too low for BlockRakingReduceIntrinsicInclusive\n\n");
+	if (m_devInfo.SIMDWidth >= 8)
+		testsPassed += TestBlockRakingReduceIntrinsicExclusive(false, true);
+	else
+		printf("\nDevice min wave width too low for BlockRakingReduceIntrinsicExclusive\n\n");
 
 	testsPassed += TestSharedBrentKungFusedIntrinsicInclusive(false, true);
+	testsPassed += TestSharedBrentKungFusedIntrinsicExclusive(false, true);
+
+	if (m_devInfo.SIMDWidth >= 8)
+		testsPassed += TestSharedRakingReduceIntrinsicInclusive(false, true);
+	else
+		printf("\nDevice min wave width too low for SharedRakingReduceIntrinsicInclusive\n\n");
+	if (m_devInfo.SIMDWidth >= 8)
+		testsPassed += TestSharedRakingReduceIntrinsicExclusive(false, true);
+	else
+		printf("\nDevice min wave width too low for SharedRakingReduceIntrinsicExclusive\n\n");
+
+	testsPassed += TestTrueBlockInclusiveScan(false, true);
+	testsPassed += TestTrueBlockExclusiveScan(false, true);
 }
 
 void Survey::InitUtilityShaders()
@@ -417,6 +484,13 @@ void Survey::InitComputeShaders()
 	//Shared
 	m_sharedBrentKungFusedIntrinsicInclusive = new SurveyKernels::SharedBrentKungFusedIntrinsicInclusive(m_device, m_devInfo, m_compileArguments, path);
 	m_sharedBrentKungFusedIntrinsicExclusive = new SurveyKernels::SharedBrentKungFusedIntrinsicExclusive(m_device, m_devInfo, m_compileArguments, path);
+
+	m_sharedRakingReduceIntrinsicInclusive = new SurveyKernels::SharedRakingReduceIntrinsicInclusive(m_device, m_devInfo, m_compileArguments, path);
+	m_sharedRakingReduceIntrinsicExclusive = new SurveyKernels::SharedRakingReduceIntrinsicExclusive(m_device, m_devInfo, m_compileArguments, path);
+
+	//True
+	m_trueBlockInclusiveScan = new SurveyKernels::TrueBlockInclusiveScan(m_device, m_devInfo, m_compileArguments, path);
+	m_trueBlockExclusiveScan = new SurveyKernels::TrueBlockExclusiveScan(m_device, m_devInfo, m_compileArguments, path);
 }
 
 void Survey::UpdateSize(uint32_t size)
