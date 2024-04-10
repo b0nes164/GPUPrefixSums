@@ -12,23 +12,23 @@
 
 int main()
 {
-	ChainedScanDecoupledLookbackDispatcher* csdl =
-		new ChainedScanDecoupledLookbackDispatcher(1 << 28);
-	csdl->TestAllExclusive();
-	csdl->TestAllInclusive();
-	csdl->BatchTimingInclusive(1 << 28, 100);
-	csdl->~ChainedScanDecoupledLookbackDispatcher();
+    ChainedScanDecoupledLookbackDispatcher* csdl =
+        new ChainedScanDecoupledLookbackDispatcher(1 << 28);
+    csdl->TestAllExclusive();
+    csdl->TestAllInclusive();
+    csdl->BatchTimingInclusive(1 << 28, 100);
+    csdl->~ChainedScanDecoupledLookbackDispatcher();
 
-	ReduceThenScanDispatcher* rts =
-		new ReduceThenScanDispatcher(1 << 28);
-	rts->TestAllExclusive();
-	rts->TestAllInclusive();
-	rts->BatchTimingInclusive(1 << 28, 100);
-	rts->~ReduceThenScanDispatcher();
+    ReduceThenScanDispatcher* rts =
+        new ReduceThenScanDispatcher(1 << 28);
+    rts->TestAllExclusive();
+    rts->TestAllInclusive();
+    rts->BatchTimingInclusive(1 << 28, 100);
+    rts->~ReduceThenScanDispatcher();
 
-	CubDispatcher* cub = new CubDispatcher(1 << 28);
-	cub->BatchTimingCubChainedScan(1 << 28, 100);
-	cub->~CubDispatcher();
+    CubDispatcher* cub = new CubDispatcher(1 << 28);
+    cub->BatchTimingCubChainedScan(1 << 28, 100);
+    cub->~CubDispatcher();
 
-	return 0;
+    return 0;
 }

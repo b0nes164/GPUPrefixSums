@@ -39,7 +39,7 @@ __device__ __forceinline__ void ScanExclusiveFull(
         t.w = t2;
 
         t2 = InclusiveWarpScanCircularShift(t.x);
-        _shared[i] = SetXAddYZW((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
+        _shared[i] = SetXAddYZW((getLaneId() ? t2 : 0) + warpReduction, t);
         warpReduction += __shfl_sync(0xffffffff, t2, 0);
     }
 
@@ -79,7 +79,7 @@ __device__ __forceinline__ void ScanExclusivePartial(
         t.w = t2;
 
         t2 = InclusiveWarpScanCircularShift(t.x);
-        _shared[i] = SetXAddYZW((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
+        _shared[i] = SetXAddYZW((getLaneId() ? t2 : 0) + warpReduction, t);
         warpReduction += __shfl_sync(0xffffffff, t2, 0);
     }
 
@@ -108,7 +108,7 @@ __device__ __forceinline__ void ScanInclusiveFull(
         t.w += t.z;
 
         const uint32_t t2 = InclusiveWarpScanCircularShift(t.w);
-        _shared[i] = AddUintToUint4((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
+        _shared[i] = AddUintToUint4((getLaneId() ? t2 : 0) + warpReduction, t);
         warpReduction += __shfl_sync(0xffffffff, t2, 0);
     }
 
@@ -139,7 +139,7 @@ __device__ __forceinline__ void ScanInclusivePartial(
         t.w += t.z;
 
         const uint32_t t2 = InclusiveWarpScanCircularShift(t.w);
-        _shared[i] = AddUintToUint4((getLaneId() ? t2 : 0) + (k ? warpReduction : 0), t);
+        _shared[i] = AddUintToUint4((getLaneId() ? t2 : 0) + warpReduction, t);
         warpReduction += __shfl_sync(0xffffffff, t2, 0);
     }
 

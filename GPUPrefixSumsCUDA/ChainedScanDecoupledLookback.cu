@@ -89,10 +89,10 @@ __device__ __forceinline__ void Lookback(
 }
 
 __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
-	uint32_t* scan,
+    uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
-	volatile uint32_t* index,
-	uint32_t vectorizedSize)
+    volatile uint32_t* index,
+    uint32_t vectorizedSize)
 {
     __shared__ uint4 s_csdl[PART_VEC_SIZE];
     __shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
@@ -162,10 +162,10 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
 }
 
 __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
-	uint32_t* scan,
+    uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
-	volatile uint32_t* index,
-	uint32_t vectorizedSize)
+    volatile uint32_t* index,
+    uint32_t vectorizedSize)
 {
     __shared__ uint4 s_csdl[PART_VEC_SIZE];
     __shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];

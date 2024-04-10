@@ -18,15 +18,15 @@
 
 namespace ChainedScanDecoupledLookback
 {
-	__global__ void CSDLExclusive(
-		uint32_t* scan,
-		volatile uint32_t* threadBlockReduction,
-		volatile uint32_t* index,
-		uint32_t vectorizedSize);
+    __global__ void CSDLExclusive(
+        uint32_t* scan,
+        volatile uint32_t* threadBlockReduction,
+        volatile uint32_t* index,
+        uint32_t vectorizedSize);
 
-	__global__ void CSDLInclusive(
-		uint32_t* scan,
-		volatile uint32_t* threadBlockReduction,
-		volatile uint32_t* index,
-		uint32_t vectorizedSize);
+    __global__ void CSDLInclusive(
+        uint32_t* scan,
+        volatile uint32_t* threadBlockReduction,
+        volatile uint32_t* index,
+        uint32_t vectorizedSize);
 }
