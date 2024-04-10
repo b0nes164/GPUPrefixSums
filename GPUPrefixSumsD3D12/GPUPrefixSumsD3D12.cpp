@@ -107,21 +107,25 @@ winrt::com_ptr<ID3D12Device> InitDeviceWarp()
 int main()
 {
     winrt::com_ptr<ID3D12Device> device = InitDevice();
-    //winrt::com_ptr<ID3D12Device> device = InitDeviceWarp();
+    //winrt::com_ptr<ID3D12Device> device = InitDeviceWarp(); <- To test WARP, you will need NuGet package
     GPUPrefixSums::DeviceInfo deviceInfo = GetDeviceInfo(device.get());
 
-    /*ChainedScanDecoupledLookback* csdl =
+    ChainedScanDecoupledLookback* csdl =
         new ChainedScanDecoupledLookback(
             device,
             deviceInfo);
     csdl->TestAll();
-    csdl->BatchTimingInclusiveInitOne(1 << 28, 100);*/
+    csdl->BatchTimingInclusiveInitOne(1 << 28, 100);
+    csdl->~ChainedScanDecoupledLookback();
 
-    /*ReduceThenScan* rts = new ReduceThenScan(device, deviceInfo);
+    ReduceThenScan* rts = new ReduceThenScan(device, deviceInfo);
     rts->TestAll();
-    rts->BatchTimingInclusiveInitOne(1 << 28, 100);*/
+    rts->BatchTimingInclusiveInitOne(1 << 28, 100);
+    rts->~ReduceThenScan();
 
     Survey* survey = new Survey(device, deviceInfo);
     survey->TestAll();
-	return 0;
+    survey->~Survey();
+
+    return 0;
 }

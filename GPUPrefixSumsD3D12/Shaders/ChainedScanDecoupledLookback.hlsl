@@ -30,6 +30,8 @@ inline void AcquirePartitionIndex(uint gtid)
         InterlockedAdd(b_index[0], 1, g_broadcast);
 }
 
+//use the exact thread that performed the scan on the last element
+//to elide an extra barrier
 inline void DeviceBroadcast(uint gtid, uint partIndex)
 {
     if (gtid == BLOCK_DIM / WaveGetLaneCount() - 1)
@@ -116,10 +118,10 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
         ScanExclusivePartial(gtid.x, partitionIndex);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() < 16)
+    if (WaveGetLaneCount() >= 16)
         LocalScanInclusiveWGE16(gtid.x, partitionIndex);
     
-    if (WaveGetLaneCount() >= 16)
+    if (WaveGetLaneCount() < 16)
         LocalScanInclusiveWLT16(gtid.x, partitionIndex);
     
     DeviceBroadcast(gtid.x, partitionIndex);
@@ -152,10 +154,10 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
         ScanInclusivePartial(gtid.x, partitionIndex);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() < 16)
+    if (WaveGetLaneCount() >= 16)
         LocalScanInclusiveWGE16(gtid.x, partitionIndex);
     
-    if (WaveGetLaneCount() >= 16)
+    if (WaveGetLaneCount() < 16)
         LocalScanInclusiveWLT16(gtid.x, partitionIndex);
     
     DeviceBroadcast(gtid.x, partitionIndex);

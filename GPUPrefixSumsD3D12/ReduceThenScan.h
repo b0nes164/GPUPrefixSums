@@ -14,26 +14,26 @@
 
 class ReduceThenScan : public GPUPrefixSumBase
 {
-	RTSKernels::Reduce* m_rtsReduce;
-	RTSKernels::Scan* m_rtsScan;
-	RTSKernels::DownSweepInclusive* m_rtsDownSweepInclusive;
-	RTSKernels::DownSweepExclusive* m_rtsDownSweepExclusive;
+    RTSKernels::Reduce* m_rtsReduce;
+    RTSKernels::Scan* m_rtsScan;
+    RTSKernels::DownSweepInclusive* m_rtsDownSweepInclusive;
+    RTSKernels::DownSweepExclusive* m_rtsDownSweepExclusive;
 
 public:
-	ReduceThenScan(
-		winrt::com_ptr<ID3D12Device> _device,
-		GPUPrefixSums::DeviceInfo _deviceInfo);
+    ReduceThenScan(
+        winrt::com_ptr<ID3D12Device> _device,
+        GPUPrefixSums::DeviceInfo _deviceInfo);
 
-	~ReduceThenScan();
+    ~ReduceThenScan();
 
 protected:
-	void InitComputeShaders() override;
+    void InitComputeShaders() override;
 
-	void DisposeBuffers() override;
+    void DisposeBuffers() override;
 
-	void InitStaticBuffers() override;
+    void InitStaticBuffers() override;
 
-	void PrepareScanCmdListInclusive() override;
+    void PrepareScanCmdListInclusive() override;
 
-	void PrepareScanCmdListExclusive() override;
+    void PrepareScanCmdListExclusive() override;
 };

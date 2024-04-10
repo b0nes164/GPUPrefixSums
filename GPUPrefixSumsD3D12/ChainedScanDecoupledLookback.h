@@ -14,27 +14,27 @@
 
 class ChainedScanDecoupledLookback : public GPUPrefixSumBase
 {
-	winrt::com_ptr<ID3D12Resource> m_indexBuffer;
+    winrt::com_ptr<ID3D12Resource> m_indexBuffer;
 
-	CSDLKernels::InitCSDL* m_initCSDL;
-	CSDLKernels::CSDLInclusive* m_csdlInclusive;
-	CSDLKernels::CSDLExclusive* m_csdlExclusive;
+    CSDLKernels::InitCSDL* m_initCSDL;
+    CSDLKernels::CSDLInclusive* m_csdlInclusive;
+    CSDLKernels::CSDLExclusive* m_csdlExclusive;
 
 public:
-	ChainedScanDecoupledLookback(
-		winrt::com_ptr<ID3D12Device> _device,
-		GPUPrefixSums::DeviceInfo _deviceInfo);
+    ChainedScanDecoupledLookback(
+        winrt::com_ptr<ID3D12Device> _device,
+        GPUPrefixSums::DeviceInfo _deviceInfo);
 
-	~ChainedScanDecoupledLookback();
+    ~ChainedScanDecoupledLookback();
 
 protected:
-	void InitComputeShaders() override;
+    void InitComputeShaders() override;
 
-	void DisposeBuffers() override;
+    void DisposeBuffers() override;
 
-	void InitStaticBuffers() override;
+    void InitStaticBuffers() override;
 
-	void PrepareScanCmdListInclusive() override;
+    void PrepareScanCmdListInclusive() override;
 
-	void PrepareScanCmdListExclusive() override;
+    void PrepareScanCmdListExclusive() override;
 };

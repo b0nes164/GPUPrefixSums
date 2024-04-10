@@ -12,13 +12,13 @@
 
 namespace UtilityKernels
 {
-	enum class Reg
-	{
-		Scan = 0,
-		ScanValidation = 1,
-		ErrorCount = 2,
+    enum class Reg
+    {
+        Scan = 0,
+        ScanValidation = 1,
+        ErrorCount = 2,
         ValidationInfo = 3,
-	};
+    };
 
     class InitOne : public ComputeKernelBase
     {

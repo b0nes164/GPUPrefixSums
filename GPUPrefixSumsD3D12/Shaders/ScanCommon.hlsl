@@ -89,7 +89,7 @@ inline void ScanExclusiveFull(uint gtid, uint partIndex)
         t.w = t2;
         
         const uint t3 = WaveReadLaneAt(t.x + WavePrefixSum(t.x), circularShift);
-        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + (k ? waveReduction : 0), t);
+        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + waveReduction, t);
         waveReduction += WaveReadLaneAt(t3, 0);
     }
     
@@ -124,7 +124,7 @@ inline void ScanExclusivePartial(uint gtid, uint partIndex)
         t.w = t2;
         
         const uint t3 = WaveReadLaneAt(t.x + WavePrefixSum(t.x), circularShift);
-        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + (k ? waveReduction : 0), t);
+        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + waveReduction, t);
         waveReduction += WaveReadLaneAt(t3, 0);
     }
     
@@ -149,7 +149,7 @@ inline void ScanInclusiveFull(uint gtid, uint partIndex)
         t.w += t.z;
         
         const uint t2 = WaveReadLaneAt(t.w + WavePrefixSum(t.w), circularShift);
-        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + (k ? waveReduction : 0);
+        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + waveReduction;
         waveReduction += WaveReadLaneAt(t2, 0);
     }
     
@@ -175,7 +175,7 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex)
         t.w += t.z;
         
         const uint t2 = WaveReadLaneAt(t.w + WavePrefixSum(t.w), circularShift);
-        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + (k ? waveReduction : 0);
+        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + waveReduction;
         waveReduction += WaveReadLaneAt(t2, 0);
     }
     
@@ -218,7 +218,7 @@ inline void LocalScanInclusiveWLT16(uint gtid, uint partIndex)
     }
     GroupMemoryBarrierWithGroupSync();
         
-    //If RADIX is not a power of lanecount
+    //If scanSize is not a power of lanecount
     const uint index = gtid + j;
     if (index < scanSize)
     {
