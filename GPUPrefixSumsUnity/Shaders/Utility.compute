@@ -1,0 +1,187 @@
+/******************************************************************************
+ * GPUPrefixSums
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright Thomas Smith 4/11/2024
+ * https://github.com/b0nes164/GPUPrefixSums
+ *
+ ******************************************************************************/
+#pragma kernel InitOne
+#pragma kernel InitRandom
+#pragma kernel ClearErrorCount
+#pragma kernel ValidateOneInclusive
+#pragma kernel ValidateOneExclusive
+#pragma kernel ValidateRandomInclusive
+#pragma kernel ValidateRandomExclusive
+
+#define VAL_THREADS     256
+
+RWStructuredBuffer<uint4> b_scan;
+RWStructuredBuffer<uint4> b_scanValidation;
+RWStructuredBuffer<uint> b_errorCount;
+
+cbuffer cbParallelSort : register(b0)
+{
+    uint e_vectorizedSize;
+    uint e_threadBlocks;
+    uint e_seed;
+    uint padding0;
+};
+
+[numthreads(VAL_THREADS, 1, 1)]
+void InitOne(int3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    const uint inc = VAL_THREADS * 256;
+    for (uint i = id.x; i < size; i += inc)
+        b_scan[i] = 1;
+}
+
+//randomized elements must be saved to be checked against
+//Because of the numerical limit on the reduction,
+//we limit both the values of the randomized value to 2^8
+//Hybrid Tausworthe
+//GPU GEMS CH37 Lee Howes + David Thomas
+#define TAUS_STEP_1 ((z1 & 4294967294U) << 12) ^ (((z1 << 13) ^ z1) >> 19)
+#define TAUS_STEP_2 ((z2 & 4294967288U) << 4) ^ (((z2 << 2) ^ z2) >> 25)
+#define TAUS_STEP_3 ((z3 & 4294967280U) << 17) ^ (((z3 << 3) ^ z3) >> 11)
+#define LCG_STEP    (z4 * 1664525 + 1013904223U)
+#define HYBRID_TAUS (z1 ^ z2 ^ z3 ^ z4)
+[numthreads(VAL_THREADS, 1, 1)]
+void InitRandom(uint3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    const uint inc = VAL_THREADS * 256;
+    
+    uint z1 = (id.x << 2) * e_seed;
+    uint z2 = ((id.x << 2) + 1) * e_seed;
+    uint z3 = ((id.x << 2) + 2) * e_seed;
+    uint z4 = ((id.x << 2) + 3) * e_seed;
+    
+    for (uint i = id.x; i < size; i += inc)
+    {
+        z1 = TAUS_STEP_1;
+        z2 = TAUS_STEP_2;
+        z3 = TAUS_STEP_3;
+        z4 = LCG_STEP;
+        uint t = HYBRID_TAUS;
+       
+        const uint4 t2 = uint4(t & 255, t >> 8 & 255, t >> 16 & 255, t >> 24);
+        
+        b_scan[i] = t2;
+        b_scanValidation[i] = t2;
+    }
+}
+
+[numthreads(1, 1, 1)]
+void ClearErrorCount(uint3 id : SV_DispatchThreadID)
+{
+    b_errorCount[0] = 0;
+}
+
+//The correct prefix sum for a input initialized to one is its index
+[numthreads(VAL_THREADS, 1, 1)]
+void ValidateOneInclusive(uint3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    const uint inc = VAL_THREADS * 256;
+    for (uint i = id.x; i < size; i += inc)
+    {
+        const uint4 t = b_scan[i];
+        const uint t2 = i << 2;
+        
+        if(t.x != t2 + 1)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.y != t2 + 2)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.z != t2 + 3)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.w != t2 + 4)
+            InterlockedAdd(b_errorCount[0], 1);
+    }
+}
+
+[numthreads(VAL_THREADS, 1, 1)]
+void ValidateOneExclusive(uint3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    const uint inc = VAL_THREADS * 256;
+    for (uint i = id.x; i < size; i += inc)
+    {
+        const uint4 t = b_scan[i];
+        const uint t2 = i << 2;
+        
+        if (t.x != t2 + 0)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.y != t2 + 1)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.z != t2 + 2)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        if (t.w != t2 + 3)
+            InterlockedAdd(b_errorCount[0], 1);
+    }
+}
+
+//Randomized input is validated by a single thread
+[numthreads(1, 1, 1)]
+void ValidateRandomInclusive(uint3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    uint sum = 0;
+    for (uint i = id.x; i < size; ++i)
+    {
+        uint4 t = b_scanValidation[i];
+        uint4 t2 = b_scan[i];
+        
+        sum += t.x;
+        if (t2.x != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        sum += t.y;
+        if (t2.y != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        sum += t.z;
+        if (t2.z != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        
+        sum += t.w;
+        if (t2.w != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+    }
+}
+
+//Randomized input is validated by a single thread
+[numthreads(1, 1, 1)]
+void ValidateRandomExclusive(uint3 id : SV_DispatchThreadID)
+{
+    const uint size = e_vectorizedSize;
+    uint sum = 0;
+    for (uint i = id.x; i < size; ++i)
+    {
+        uint4 t = b_scanValidation[i];
+        uint4 t2 = b_scan[i];
+        
+        if (t2.x != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        sum += t.x;
+        
+        if (t2.y != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        sum += t.y;
+        
+        if (t2.z != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        sum += t.z;
+        
+        if (t2.w != sum)
+            InterlockedAdd(b_errorCount[0], 1);
+        sum += t.w;
+    }
+}
