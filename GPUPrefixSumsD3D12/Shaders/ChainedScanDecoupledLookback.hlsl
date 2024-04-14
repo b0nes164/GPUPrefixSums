@@ -19,13 +19,8 @@
 #define FLAG_INCLUSIVE  2           //Flag indicating this partition tile has summed all preceding tiles and added to its sum.
 #define FLAG_MASK       3           //Mask used to retrieve the flag
 
-<<<<<<< Updated upstream
 globallycoherent RWStructuredBuffer<uint> b_index                   : register(u1);
 globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction    : register(u2);
-=======
-globallycoherent RWStructuredBuffer<uint> b_index : register(u1);
-globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction : register(u2);
->>>>>>> Stashed changes
 
 groupshared uint g_broadcast;
 
@@ -46,9 +41,6 @@ inline void DeviceBroadcast(uint gtid, uint partIndex)
     }
 }
 
-<<<<<<< Updated upstream
-inline void Lookback(uint partIndex)
-=======
 //Perform lookback with a single thread
 inline void LookbackSingle(uint partIndex)
 {
@@ -78,7 +70,6 @@ inline void LookbackSingle(uint partIndex)
 
 //Perform lookback with a single warp
 inline void LookbackWarp(uint partIndex)
->>>>>>> Stashed changes
 {
     uint prevReduction = 0;
     uint k = partIndex + WaveGetLaneCount() - WaveGetLaneIndex();
@@ -156,20 +147,15 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, partitionIndex);
+        LocalScanInclusiveWGE16(gtid.x);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, partitionIndex);
+        LocalScanInclusiveWLT16(gtid.x);
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
-<<<<<<< Updated upstream
-    if (partitionIndex && gtid.x < WaveGetLaneCount())
-        Lookback(partitionIndex);
-=======
     if (partitionIndex && !gtid.x)
         LookbackSingle(partitionIndex);
->>>>>>> Stashed changes
     GroupMemoryBarrierWithGroupSync();
     
     const uint prevReduction = g_broadcast +
@@ -197,20 +183,15 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, partitionIndex);
+        LocalScanInclusiveWGE16(gtid.x);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, partitionIndex);
+        LocalScanInclusiveWLT16(gtid.x);
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
-<<<<<<< Updated upstream
-    if (partitionIndex && gtid.x < WaveGetLaneCount())
-        Lookback(partitionIndex);
-=======
     if (partitionIndex && !gtid.x)
         LookbackSingle(partitionIndex);
->>>>>>> Stashed changes
     GroupMemoryBarrierWithGroupSync();
     
     const uint prevReduction = g_broadcast +

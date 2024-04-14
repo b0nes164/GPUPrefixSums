@@ -120,13 +120,13 @@ int main()
     csdldf->BatchTimingInclusiveInitOne(1 << 28, 100);
     csdldf->~ChainedScanDecoupledLookbackDecoupledFallback();
 
-    /*ChainedScanDecoupledLookback* csdl =
+    ChainedScanDecoupledLookback* csdl =
         new ChainedScanDecoupledLookback(
             device,
             deviceInfo);
     csdl->TestAll();
     csdl->BatchTimingInclusiveInitOne(1 << 28, 100);
-    csdl->~ChainedScanDecoupledLookback();*/
+    csdl->~ChainedScanDecoupledLookback();
 
     ReduceThenScan* rts = new ReduceThenScan(device, deviceInfo);
     rts->TestAll();
@@ -137,8 +137,8 @@ int main()
     survey->TestAll();
     survey->~Survey();
 
-    /*EmulatedDeadlock* deadlock = new EmulatedDeadlock(device, deviceInfo);
+    EmulatedDeadlock* deadlock = new EmulatedDeadlock(device, deviceInfo);
     deadlock->TestAll();
-    deadlock->BatchTimingInclusiveInitOne(1 << 28, 100);*/
+    deadlock->BatchTimingInclusiveInitOne(1 << 28, 100);
     return 0;
 }

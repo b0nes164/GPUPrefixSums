@@ -184,13 +184,13 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex)
 }
 
 //Reduce the wave reductions
-inline void LocalScanInclusiveWGE16(uint gtid, uint partIndex)
+inline void LocalScanInclusiveWGE16(uint gtid)
 {
     if (gtid < BLOCK_DIM / WaveGetLaneCount())
         g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
 }
 
-inline void LocalScanInclusiveWLT16(uint gtid, uint partIndex)
+inline void LocalScanInclusiveWLT16(uint gtid)
 {
     const uint scanSize = BLOCK_DIM / WaveGetLaneCount();
     if (gtid < scanSize)
