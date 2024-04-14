@@ -2,7 +2,7 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 4/13/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -11,7 +11,7 @@
 #include "ComputeKernelBase.h"
 #include "Utils.h"
 
-namespace CSDLKernels
+namespace EmulatedDeadlockKernels
 {
     enum class Reg
     {
@@ -20,10 +20,10 @@ namespace CSDLKernels
         ThreadBlockReduction = 2,
     };
 
-    class InitCSDL : ComputeKernelBase
+    class InitEmulatedDeadlock : ComputeKernelBase
     {
     public:
-        InitCSDL(
+        InitEmulatedDeadlock(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -32,7 +32,7 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"InitChainedScan",
+                L"InitEmulatedDeadlock",
                 compileArguments,
                 CreateRootParameters())
         {
@@ -63,10 +63,10 @@ namespace CSDLKernels
         }
     };
 
-    class CSDLExclusive : ComputeKernelBase
+    class ClearIndex : ComputeKernelBase
     {
     public:
-        CSDLExclusive(
+        ClearIndex(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -75,14 +75,48 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"ChainedScanDecoupledLookbackExclusive",
+                L"ClearIndex",
                 compileArguments,
                 CreateRootParameters())
         {
         }
 
-        //Setting the bitPartition flag is unecessary for CSDL, but splitting
-        //the dispatches is still necessary
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& indexBuffer)
+        {
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRootUnorderedAccessView(0, indexBuffer);
+            cmdList->Dispatch(1, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(1);
+            rootParameters[0].InitAsUnorderedAccessView((UINT)Reg::Index);
+            return rootParameters;
+        }
+    };
+
+    class EmulatedDeadlockFirstPass : ComputeKernelBase
+    {
+    public:
+        EmulatedDeadlockFirstPass(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"EmulatedDeadlockFirstPass",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
             const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
@@ -94,7 +128,7 @@ namespace CSDLKernels
             const uint32_t fullBlocks = threadBlocks / k_maxDim;
             if (fullBlocks)
             {
-                std::array<uint32_t, 4> t = { 
+                std::array<uint32_t, 4> t = {
                     vectorizedSize,
                     threadBlocks,
                     0,
@@ -116,7 +150,7 @@ namespace CSDLKernels
             const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
             if (partialBlocks)
             {
-                std::array<uint32_t, 4> t = { 
+                std::array<uint32_t, 4> t = {
                     vectorizedSize,
                     threadBlocks,
                     0,
@@ -143,10 +177,10 @@ namespace CSDLKernels
         }
     };
 
-    class CSDLInclusive : ComputeKernelBase
+    class EmulatedDeadlockSecondPass : ComputeKernelBase
     {
     public:
-        CSDLInclusive(
+        EmulatedDeadlockSecondPass(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -155,14 +189,12 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"ChainedScanDecoupledLookbackInclusive",
+                L"EmulatedDeadlockSecondPass",
                 compileArguments,
                 CreateRootParameters())
         {
         }
 
-        //Setting the bitPartition flag is unecessary for CSDL, but splitting
-        //the dispatches is still necessary
         void Dispatch(
             winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
             const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,

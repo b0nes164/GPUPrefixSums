@@ -8,9 +8,11 @@
  ******************************************************************************/
 #include "pch.h"
 #include "GPUPrefixSums.h"
+#include "ChainedScanDecoupledLookbackDecoupledFallback.h"
 #include "ChainedScanDecoupledLookback.h"
 #include "ReduceThenScan.h"
 #include "Survey.h"
+#include "EmulatedDeadlock.h"
 
 extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 613; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = u8".\\D3D12\\"; }
@@ -110,13 +112,21 @@ int main()
     //winrt::com_ptr<ID3D12Device> device = InitDeviceWarp(); <- To test WARP, you will need NuGet package
     GPUPrefixSums::DeviceInfo deviceInfo = GetDeviceInfo(device.get());
 
-    ChainedScanDecoupledLookback* csdl =
+    ChainedScanDecoupledLookbackDecoupledFallback* csdldf =
+        new ChainedScanDecoupledLookbackDecoupledFallback(
+            device,
+            deviceInfo);
+    csdldf->TestAll();
+    csdldf->BatchTimingInclusiveInitOne(1 << 28, 100);
+    csdldf->~ChainedScanDecoupledLookbackDecoupledFallback();
+
+    /*ChainedScanDecoupledLookback* csdl =
         new ChainedScanDecoupledLookback(
             device,
             deviceInfo);
     csdl->TestAll();
     csdl->BatchTimingInclusiveInitOne(1 << 28, 100);
-    csdl->~ChainedScanDecoupledLookback();
+    csdl->~ChainedScanDecoupledLookback();*/
 
     ReduceThenScan* rts = new ReduceThenScan(device, deviceInfo);
     rts->TestAll();
@@ -127,5 +137,8 @@ int main()
     survey->TestAll();
     survey->~Survey();
 
+    /*EmulatedDeadlock* deadlock = new EmulatedDeadlock(device, deviceInfo);
+    deadlock->TestAll();
+    deadlock->BatchTimingInclusiveInitOne(1 << 28, 100);*/
     return 0;
 }

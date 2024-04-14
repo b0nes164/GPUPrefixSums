@@ -2,7 +2,7 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 4/13/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -11,7 +11,7 @@
 #include "ComputeKernelBase.h"
 #include "Utils.h"
 
-namespace CSDLKernels
+namespace CSDLDFKernels
 {
     enum class Reg
     {
@@ -20,10 +20,10 @@ namespace CSDLKernels
         ThreadBlockReduction = 2,
     };
 
-    class InitCSDL : ComputeKernelBase
+    class InitCSDLDF : ComputeKernelBase
     {
     public:
-        InitCSDL(
+        InitCSDLDF(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -32,7 +32,7 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"InitChainedScan",
+                L"InitCSDLDF",
                 compileArguments,
                 CreateRootParameters())
         {
@@ -63,10 +63,10 @@ namespace CSDLKernels
         }
     };
 
-    class CSDLExclusive : ComputeKernelBase
+    class CSDLDFExclusive : ComputeKernelBase
     {
     public:
-        CSDLExclusive(
+        CSDLDFExclusive(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -75,7 +75,7 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"ChainedScanDecoupledLookbackExclusive",
+                L"ChainedScanDecoupledLookbackDecoupledFallbackExclusive",
                 compileArguments,
                 CreateRootParameters())
         {
@@ -94,7 +94,7 @@ namespace CSDLKernels
             const uint32_t fullBlocks = threadBlocks / k_maxDim;
             if (fullBlocks)
             {
-                std::array<uint32_t, 4> t = { 
+                std::array<uint32_t, 4> t = {
                     vectorizedSize,
                     threadBlocks,
                     0,
@@ -116,7 +116,7 @@ namespace CSDLKernels
             const uint32_t partialBlocks = threadBlocks - fullBlocks * k_maxDim;
             if (partialBlocks)
             {
-                std::array<uint32_t, 4> t = { 
+                std::array<uint32_t, 4> t = {
                     vectorizedSize,
                     threadBlocks,
                     0,
@@ -143,10 +143,10 @@ namespace CSDLKernels
         }
     };
 
-    class CSDLInclusive : ComputeKernelBase
+    class CSDLDFInclusive : ComputeKernelBase
     {
     public:
-        CSDLInclusive(
+        CSDLDFInclusive(
             winrt::com_ptr<ID3D12Device> device,
             const GPUPrefixSums::DeviceInfo& info,
             const std::vector<std::wstring>& compileArguments,
@@ -155,7 +155,7 @@ namespace CSDLKernels
                 device,
                 info,
                 shaderPath,
-                L"ChainedScanDecoupledLookbackInclusive",
+                L"ChainedScanDecoupledLookbackDecoupledFallbackInclusive",
                 compileArguments,
                 CreateRootParameters())
         {

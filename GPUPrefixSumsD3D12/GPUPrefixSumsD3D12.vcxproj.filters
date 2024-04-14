@@ -33,6 +33,12 @@
     <ClCompile Include="Survey.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="EmulatedDeadlock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ChainedScanDecoupledLookbackDecoupledFallback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GPUPrefixSums.h">
@@ -72,6 +78,18 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Survey.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EmulatedDeadlock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EmulatedDeadlockKernels.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ChainedScanDecoupledLookbackDecoupledFallback.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CSDLDFKernels.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

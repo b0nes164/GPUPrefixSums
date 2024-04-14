@@ -157,6 +157,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ChainedScanDecoupledLookback.cpp" />
+    <ClCompile Include="ChainedScanDecoupledLookbackDecoupledFallback.cpp" />
+    <ClCompile Include="EmulatedDeadlock.cpp" />
     <ClCompile Include="GPUPrefixSumsD3D12.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -169,8 +171,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChainedScanDecoupledLookback.h" />
+    <ClInclude Include="ChainedScanDecoupledLookbackDecoupledFallback.h" />
     <ClInclude Include="ComputeKernelBase.h" />
+    <ClInclude Include="CSDLDFKernels.h" />
     <ClInclude Include="CSDLKernels.h" />
+    <ClInclude Include="EmulatedDeadlock.h" />
+    <ClInclude Include="EmulatedDeadlockKernels.h" />
     <ClInclude Include="GPUPrefixSumBase.h" />
     <ClInclude Include="GPUPrefixSums.h" />
     <ClInclude Include="pch.h" />

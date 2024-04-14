@@ -6,7 +6,6 @@
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
-
 #pragma once
 #include "pch.h"
 #include "Utils.h"
@@ -75,7 +74,7 @@ protected:
     };
 
 public:
-    void TestExclusiveScanInitOne(
+    virtual void TestExclusiveScanInitOne(
         uint32_t testSize,
         bool shouldReadBack,
         bool shouldValidate)
@@ -92,7 +91,7 @@ public:
             ReadBackOutput();
     }
 
-    void TestInclusiveScanInitOne(
+    virtual void TestInclusiveScanInitOne(
         uint32_t testSize,
         bool shouldReadBack,
         bool shouldValidate)
@@ -109,7 +108,7 @@ public:
             ReadBackOutput();
     }
 
-    void TestExclusiveScanInitRandom(
+    virtual void TestExclusiveScanInitRandom(
         uint32_t testSize,
         bool shouldReadBack,
         bool shouldValidate)
@@ -135,7 +134,7 @@ public:
         }
     }
 
-    void TestInclusiveScanInitRandom(
+    virtual void TestInclusiveScanInitRandom(
         uint32_t testSize,
         bool shouldReadBack,
         bool shouldValidate)
@@ -161,7 +160,7 @@ public:
         }
     }
 
-    void TestAll()
+    virtual void TestAll()
     {
         printf("\nBeginning ");
         printf(k_scanName);

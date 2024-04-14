@@ -19,14 +19,19 @@
 #define FLAG_INCLUSIVE  2           //Flag indicating this partition tile has summed all preceding tiles and added to its sum.
 #define FLAG_MASK       3           //Mask used to retrieve the flag
 
+<<<<<<< Updated upstream
 globallycoherent RWStructuredBuffer<uint> b_index                   : register(u1);
 globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction    : register(u2);
+=======
+globallycoherent RWStructuredBuffer<uint> b_index : register(u1);
+globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction : register(u2);
+>>>>>>> Stashed changes
 
 groupshared uint g_broadcast;
 
 inline void AcquirePartitionIndex(uint gtid)
 {
-    if(!gtid)
+    if (!gtid)
         InterlockedAdd(b_index[0], 1, g_broadcast);
 }
 
@@ -41,7 +46,39 @@ inline void DeviceBroadcast(uint gtid, uint partIndex)
     }
 }
 
+<<<<<<< Updated upstream
 inline void Lookback(uint partIndex)
+=======
+//Perform lookback with a single thread
+inline void LookbackSingle(uint partIndex)
+{
+    uint prevReduction = 0;
+    uint lookBackIndex = partIndex - 1;
+    
+    while (true)
+    {
+        const uint flagPayload = b_threadBlockReduction[lookBackIndex];
+
+        if ((flagPayload & FLAG_MASK) > FLAG_NOT_READY)
+        {
+            prevReduction += flagPayload >> 2;
+            if ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE)
+            {
+                g_broadcast = prevReduction;
+                InterlockedAdd(b_threadBlockReduction[partIndex], 1 | (prevReduction << 2));
+                break;
+            }
+            else
+            {
+                lookBackIndex--;
+            }
+        }
+    }
+}
+
+//Perform lookback with a single warp
+inline void LookbackWarp(uint partIndex)
+>>>>>>> Stashed changes
 {
     uint prevReduction = 0;
     uint k = partIndex + WaveGetLaneCount() - WaveGetLaneIndex();
@@ -106,7 +143,7 @@ void InitChainedScan(uint3 id : SV_DispatchThreadID)
 
 [numthreads(BLOCK_DIM, 1, 1)]
 void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
-{    
+{
     AcquirePartitionIndex(gtid.x);
     GroupMemoryBarrierWithGroupSync();
     const uint partitionIndex = g_broadcast;
@@ -114,7 +151,7 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
     if (partitionIndex < e_threadBlocks - 1)
         ScanExclusiveFull(gtid.x, partitionIndex);
     
-    if(partitionIndex == e_threadBlocks - 1)
+    if (partitionIndex == e_threadBlocks - 1)
         ScanExclusivePartial(gtid.x, partitionIndex);
     GroupMemoryBarrierWithGroupSync();
     
@@ -126,11 +163,16 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
+<<<<<<< Updated upstream
     if (partitionIndex && gtid.x < WaveGetLaneCount())
         Lookback(partitionIndex);
+=======
+    if (partitionIndex && !gtid.x)
+        LookbackSingle(partitionIndex);
+>>>>>>> Stashed changes
     GroupMemoryBarrierWithGroupSync();
     
-    const uint prevReduction = g_broadcast + 
+    const uint prevReduction = g_broadcast +
         (gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0);
     
     if (partitionIndex < e_threadBlocks - 1)
@@ -162,8 +204,13 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
+<<<<<<< Updated upstream
     if (partitionIndex && gtid.x < WaveGetLaneCount())
         Lookback(partitionIndex);
+=======
+    if (partitionIndex && !gtid.x)
+        LookbackSingle(partitionIndex);
+>>>>>>> Stashed changes
     GroupMemoryBarrierWithGroupSync();
     
     const uint prevReduction = g_broadcast +
