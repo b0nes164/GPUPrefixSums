@@ -58,23 +58,15 @@ inline void WaveReduceFull(uint gtid, uint gid)
         g_fallBackReduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-inline void LocalReduceWGE16(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+inline uint LocalReduceWGE16(uint gtid, uint toReduceIndex)
 {
     uint blockReduction;
     if (gtid < BLOCK_DIM / WaveGetLaneCount())
         blockReduction = WaveActiveSum(g_fallBackReduction[gtid]);
-    
-    if (!gtid)
-    {
-        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
-            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, successFlag);
-        
-        if (!successFlag && toReduceIndex)
-            prevReduction += blockReduction;
-    }
+    return blockReduction;
 }
 
-inline void LocalReduceWLT16(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+inline uint LocalReduceWLT16(uint gtid, uint toReduceIndex)
 {
     const uint reductionSize = BLOCK_DIM / WaveGetLaneCount();
     if (gtid < reductionSize)
@@ -95,27 +87,53 @@ inline void LocalReduceWLT16(uint gtid, uint toReduceIndex, inout uint prevReduc
         offset += laneLog;
     }
     
+    uint blockReduction;
     if (!gtid)
-    {
-        const uint blockReduction = g_fallBackReduction[BLOCK_DIM / WaveGetLaneCount() - 1];
-        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
-            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, successFlag);
-        
-        if (!successFlag && toReduceIndex)
-            prevReduction += blockReduction;
-    }
+        blockReduction = g_fallBackReduction[reductionSize - 1];
+    return blockReduction;
 }
 
-inline void FallBackReduction(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+inline void FallBack(
+    uint gtid,
+    uint partIndex,
+    uint toReduceIndex,
+    inout uint prevReduction,
+    inout uint spinCount,
+    inout uint lookBackIndex)
 {
     WaveReduceFull(gtid, toReduceIndex);
     GroupMemoryBarrierWithGroupSync();
 
+    uint blockReduction;
     if (WaveGetLaneCount() >= 16)
-        LocalReduceWGE16(gtid, toReduceIndex, prevReduction, successFlag);
+        blockReduction = LocalReduceWGE16(gtid, toReduceIndex);
     
     if (WaveGetLaneCount() < 16)
-        LocalReduceWLT16(gtid, toReduceIndex, prevReduction, successFlag);
+        blockReduction = LocalReduceWLT16(gtid, toReduceIndex);
+    
+    if (!gtid)
+    {
+        uint valueOut;
+        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
+            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, valueOut);
+
+        if (!valueOut)
+            prevReduction += blockReduction;
+        else
+            prevReduction += valueOut >> 2;
+        
+        if (!toReduceIndex || (valueOut & FLAG_MASK) == FLAG_INCLUSIVE)
+        {
+            g_broadcast = prevReduction;
+            g_lock = false;
+            InterlockedAdd(b_threadBlockReduction[partIndex], 1 | (prevReduction << 2));
+        }
+        else
+        {
+            spinCount = 0;
+            lookBackIndex--;
+        }
+    }
 }
 
 inline void LookbackSingleWithFallBack(uint gtid, uint partIndex)
@@ -126,12 +144,14 @@ inline void LookbackSingleWithFallBack(uint gtid, uint partIndex)
     
     while (WaveReadLaneAt(g_lock, 0) == true)
     {
+        GroupMemoryBarrierWithGroupSync();
+        
         if (!gtid)
         {
             while (spinCount < MAX_SPIN_COUNT)
             {
                 const uint flagPayload = b_threadBlockReduction[lookBackIndex];
-
+                
                 if ((flagPayload & FLAG_MASK) > FLAG_NOT_READY)
                 {
                     prevReduction += flagPayload >> 2;
@@ -160,16 +180,15 @@ inline void LookbackSingleWithFallBack(uint gtid, uint partIndex)
         
         if (g_lock)
         {
-            uint successFlag = 0xffffffff;
-            FallBackReduction(gtid, g_broadcast, prevReduction, successFlag);
-            
-            if (!gtid)
-            {
-                if (!successFlag && lookBackIndex)
-                    lookBackIndex--;
-                spinCount = 0;
-            }
+            FallBack(
+                gtid,
+                partIndex,
+                g_broadcast,
+                prevReduction,
+                spinCount,
+                lookBackIndex);
         }
+        GroupMemoryBarrierWithGroupSync();
     }
 }
 

@@ -9,6 +9,7 @@
 #include "ChainedScanDecoupledLookbackDispatcher.cuh"
 #include "ReduceThenScanDispatcher.cuh"
 #include "CubDispatcher.cuh"
+#include "EmulatedDeadlockingDispatcher.cuh"
 
 int main()
 {

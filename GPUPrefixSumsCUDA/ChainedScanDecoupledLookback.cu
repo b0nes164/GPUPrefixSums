@@ -147,7 +147,6 @@ __global__ void ChainedScanDecoupledLookback::CSDLExclusive(
             WARP_PART_START);
     }
 
-
     if (partitionIndex == gridDim.x - 1)
     {
         DownSweepPartial(
@@ -219,7 +218,6 @@ __global__ void ChainedScanDecoupledLookback::CSDLInclusive(
             WARP_PARTITIONS,
             WARP_PART_START);
     }
-        
 
     if (partitionIndex == gridDim.x - 1)
     {

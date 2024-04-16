@@ -57,7 +57,13 @@ void EmulatedDeadlock::TestAll()
     printf("\n");
 
     for (uint32_t i = 21; i <= 28; ++i)
-        testsPassed += ValidateScan(1 << i, i, ValidationType::ONE_INCLUSIVE);
+    {
+        if (ValidateScan(1 << i, i, ValidationType::ONE_INCLUSIVE))
+            testsPassed++;
+        else
+            printf("err at size %u \n", 1 << i);
+    }
+        
 
     const uint32_t testsExpected = k_partitionSize + 8;
     printf(k_scanName);

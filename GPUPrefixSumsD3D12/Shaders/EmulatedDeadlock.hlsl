@@ -37,14 +37,37 @@ inline void SetLock(uint gtid)
         g_lock = true;
 }
 
-//Instead of using InterlockedAdd or InterlockedOr to perform the atomic store, 
-//we use InterlockedCompareStore, this is so that 
 inline void DeviceBroadcast(uint gtid, uint partIndex)
 {
     if (gtid == BLOCK_DIM / WaveGetLaneCount() - 1)
     {
         InterlockedCompareStore(b_threadBlockReduction[partIndex], 0,
             (partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | g_reduction[gtid] << 2);
+    }
+}
+
+//Note this is unused 
+inline void DeviceBroadcastEmulateDeadlock(uint gtid, uint partIndex)
+{
+    if (!(partIndex & MASK) && partIndex != e_threadBlocks - 1)
+    {
+        uint valueOut = 0;
+        if(!gtid)
+        {
+            while (valueOut == 0)
+            {
+                InterlockedOr(b_threadBlockReduction[partIndex], 0, valueOut);
+            }
+        }
+        DeviceMemoryBarrierWithGroupSync();
+    }
+    else
+    {
+        if (gtid == BLOCK_DIM / WaveGetLaneCount() - 1)
+        {
+            InterlockedCompareStore(b_threadBlockReduction[partIndex], 0,
+                (partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | g_reduction[gtid] << 2);
+        }
     }
 }
 
@@ -59,26 +82,21 @@ inline void WaveReduceFull(uint gtid, uint gid)
         g_fallBackReduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-//identical to the reductions in ReduceThenScan,
-//but on different shared memory location
-//Attempt to store the reduction, if unsuccessful, discard the result
-inline void LocalReduceWGE16(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+//Because each threadblock is free to perform fallbacks at will,
+//there is a possibility that while this threadblock has been performing a fallback,
+//another threadblock has successfully completed its fallback, inserted its reduction, and unlocked
+//the deadlocker threadblock, which then completed its scan. If that is the case, then the reduction
+//calculated by this threadblock is incorrect, and we discard the result and instead use the result provided
+//by the atomic exchange.
+inline uint LocalReduceWGE16(uint gtid, uint toReduceIndex)
 {
     uint blockReduction;
     if (gtid < BLOCK_DIM / WaveGetLaneCount())
         blockReduction = WaveActiveSum(g_fallBackReduction[gtid]);
-    
-    if (!gtid)
-    {
-        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
-            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, successFlag);
-        
-        if (!successFlag && toReduceIndex)
-            prevReduction += blockReduction;
-    }
+    return blockReduction;
 }
 
-inline void LocalReduceWLT16(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+inline uint LocalReduceWLT16(uint gtid, uint toReduceIndex)
 {
     const uint reductionSize = BLOCK_DIM / WaveGetLaneCount();
     if (gtid < reductionSize)
@@ -99,30 +117,57 @@ inline void LocalReduceWLT16(uint gtid, uint toReduceIndex, inout uint prevReduc
         offset += laneLog;
     }
     
-    if (!gtid)
-    {
-        const uint blockReduction = g_fallBackReduction[BLOCK_DIM / WaveGetLaneCount() - 1];
-        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
-            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, successFlag);
-        
-        if (!successFlag && toReduceIndex)
-            prevReduction += blockReduction;
-    }
+    uint blockReduction;
+    if(!gtid)
+        blockReduction = g_fallBackReduction[reductionSize - 1];
+    return blockReduction;
 }
 
-//If a deadlock is encountered, deadlockee threadblock 
-//reduces the tile itself. The last partition can never be a deadlocker,
-//so partial tiles do not need to be taken into account.
-inline void FallBackReduction(uint gtid, uint toReduceIndex, inout uint prevReduction, inout uint successFlag)
+inline void FallBack(
+    uint gtid,
+    uint partIndex,
+    uint toReduceIndex,
+    inout uint prevReduction,
+    inout uint spinCount,
+    inout uint lookBackIndex)
 {
+    //The last partition can never be a deadlocker,
+    //so partial tiles do not need to be taken into account.
     WaveReduceFull(gtid, toReduceIndex);
     GroupMemoryBarrierWithGroupSync();
 
+    uint blockReduction;
     if (WaveGetLaneCount() >= 16)
-        LocalReduceWGE16(gtid, toReduceIndex, prevReduction, successFlag);
+        blockReduction = LocalReduceWGE16(gtid, toReduceIndex);
     
     if (WaveGetLaneCount() < 16)
-        LocalReduceWLT16(gtid, toReduceIndex, prevReduction, successFlag);
+        blockReduction = LocalReduceWLT16(gtid, toReduceIndex);
+    
+    if (!gtid)
+    {
+        uint valueOut;
+        InterlockedCompareExchange(b_threadBlockReduction[toReduceIndex], 0,
+            (toReduceIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | blockReduction << 2, valueOut);
+
+        if (!valueOut)
+            prevReduction += blockReduction;
+        else
+            prevReduction += valueOut >> 2;
+        
+        //If the fallback was performed on the first index OR
+        //an inclusive flag was encountered, stop the lookback
+        if (!toReduceIndex || (valueOut & FLAG_MASK) == FLAG_INCLUSIVE)
+        {
+            g_broadcast = prevReduction;
+            g_lock = false;
+            InterlockedAdd(b_threadBlockReduction[partIndex], 1 | (prevReduction << 2));
+        }
+        else
+        {
+            spinCount = 0;
+            lookBackIndex--;
+        }
+    }
 }
 
 //Perform lookback with a single thread, with fallback if a deadlock is encountered.
@@ -135,13 +180,15 @@ inline void LookbackSingleWithFallBack(uint gtid, uint partIndex)
     
     while (WaveReadLaneAt(g_lock, 0) == true)
     {
+        GroupMemoryBarrierWithGroupSync(); //Make sure all threads have entered the loop
+        
+        //First thread: looksback
         if (!gtid)
         {
-            //Wait for other threadblocks 
             while (spinCount < MAX_SPIN_COUNT)
             {
                 const uint flagPayload = b_threadBlockReduction[lookBackIndex];
-
+                
                 if ((flagPayload & FLAG_MASK) > FLAG_NOT_READY)
                 {
                     prevReduction += flagPayload >> 2;
@@ -163,32 +210,25 @@ inline void LookbackSingleWithFallBack(uint gtid, uint partIndex)
                 }
             }
             
-            //If the lookback was not sucessful, and we are now performing a fallback
+            //If the lookback was not sucessful, we are now performing a fallback
             //so the lookback thread broadcasts the index of the deadlocker tile
             if (g_lock)
                 g_broadcast = lookBackIndex;
         }
         GroupMemoryBarrierWithGroupSync();
         
-        //is the lookback successful?
+        //All threads: Was the lookback successful?
         if (g_lock)
         {
-            //This flag indicates whether a threadblock successfully inserted its
-            //fallback reduction. As each threadblock is free to perform fallbacks at will,
-            //there is a possibility that while this threadblock has been performing a fallback,
-            //another threadblock has successfully completed its fallback, inserted its reduction, and unlocked
-            //the deadlocker threadblock, which then completed its scan. If that is the case, then the reduction
-            //calculated by this threadblock is incorrect, and the result should be discarded.
-            uint successFlag = 0xffffffff;
-            FallBackReduction(gtid, g_broadcast, prevReduction, successFlag);
-            
-            if (!gtid)
-            {
-                if (!successFlag && lookBackIndex)
-                    lookBackIndex--;
-                spinCount = 0;
-            }
+            FallBack(
+                gtid,
+                partIndex,
+                g_broadcast,
+                prevReduction,
+                spinCount,
+                lookBackIndex);
         }
+        GroupMemoryBarrierWithGroupSync(); //The fallback may have unlocked
     }
 }
 
@@ -234,7 +274,7 @@ void EmulatedDeadlockFirstPass(uint gtid : SV_GroupThreadID)
             LocalScanInclusiveWLT16(gtid.x);
     
         DeviceBroadcast(gtid.x, partitionIndex);
-
+        
         if (partitionIndex)
             LookbackSingleWithFallBack(gtid.x, partitionIndex);
         else
@@ -291,27 +331,3 @@ void EmulatedDeadlockSecondPass(uint gtid : SV_GroupThreadID)
             DownSweepPartial(gtid.x, partitionIndex, prevReduction);
     }
 }
-
-/*
-inline void DeviceBroadcastEmulateDeadlock(uint gtid, uint partIndex)
-{
-    //in a non-emulated deadlock, the final partition can never 
-    //be the deadlocking partition
-    if (!(partIndex % 97) && partIndex != e_threadBlocks - 1)
-    {
-        //spin until a fallback unlocks us
-        while(b_threadBlockReduction[partIndex] < 4)
-        {
-            DeviceMemoryBarrierWithGroupSync();
-        }
-    }
-    else
-    {
-        if (gtid == BLOCK_DIM / WaveGetLaneCount() - 1)
-        {
-            InterlockedCompareStore(b_threadBlockReduction[partIndex], 0,
-                (partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | g_reduction[gtid] << 2);
-        }
-    }
-}
-*/

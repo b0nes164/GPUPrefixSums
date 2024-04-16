@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="ChainedScanDecoupledLookback.cu" />
+    <CudaCompile Include="EmulatedDeadlocking.cu" />
     <CudaCompile Include="GPUPrefixSumsCUDA.cu" />
     <CudaCompile Include="ReduceThenScan.cu" />
   </ItemGroup>
@@ -19,6 +20,8 @@
     <ClInclude Include="ChainedScanDecoupledLookback.cuh" />
     <ClInclude Include="ChainedScanDecoupledLookbackDispatcher.cuh" />
     <ClInclude Include="CubDispatcher.cuh" />
+    <ClInclude Include="EmulatedDeadlocking.cuh" />
+    <ClInclude Include="EmulatedDeadlockingDispatcher.cuh" />
     <ClInclude Include="ScanCommon.cuh" />
     <ClInclude Include="ReduceThenScan.cuh" />
     <ClInclude Include="ReduceThenScanDispatcher.cuh" />
