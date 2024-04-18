@@ -22,9 +22,6 @@
 #define FLAG_INCLUSIVE  2
 #define FLAG_MASK       3
 
-#define MAX_SPIN_COUNT  8
-#define MASK            1
-
  //Atomically acquire partition index
 __device__ __forceinline__ uint32_t AcquirePartitionIndex(
     uint32_t& _broadcast,
@@ -44,12 +41,13 @@ __device__ __forceinline__ uint32_t SetLock(
 __device__ __forceinline__ void LocalScanDeviceBroadcastEmulatedDeadlock(
     uint32_t* _reduction,
     volatile uint32_t* _threadBlockReduction,
-    const uint32_t& _partIndex)
+    const uint32_t& _partIndex,
+    const uint32_t& _partMask)
 {
     if (threadIdx.x < BLOCK_DIM / LANE_COUNT)
         _reduction[threadIdx.x] = ActiveInclusiveWarpScan(_reduction[threadIdx.x]);
 
-    if (!(_partIndex & MASK) && _partIndex != gridDim.x - 1)
+    if (!(_partIndex & _partMask) && _partIndex != gridDim.x - 1)
     {
         while (_threadBlockReduction[_partIndex] == 0)
         {
@@ -126,6 +124,7 @@ __device__ __forceinline__ void Fallback(
 
 __device__ __forceinline__ void Lookback(
     const uint32_t& _partIndex,
+    const uint32_t& _maxSpinCount,
     bool& _lock,
     uint32_t& _broadcast,
     uint32_t* scan,
@@ -142,7 +141,7 @@ __device__ __forceinline__ void Lookback(
 
         if (!threadIdx.x)
         {
-            while (spinCount < MAX_SPIN_COUNT)
+            while (spinCount < _maxSpinCount)
             {
                 const uint32_t flagPayload = _threadBlockReduction[lookBackIndex];
 
@@ -197,7 +196,9 @@ __global__ void EmulatedDeadlocking::EmulatedDeadlockSpinning(
     uint32_t* scan,
     volatile uint32_t* threadBlockReduction,
     volatile uint32_t* index,
-    uint32_t vectorizedSize)
+    uint32_t vectorizedSize,
+    uint32_t partMask,
+    uint32_t maxSpinCount)
 {
     __shared__ uint4 s_csdl[PART_VEC_SIZE];
     __shared__ uint32_t s_reduction[BLOCK_DIM / LANE_COUNT];
@@ -236,12 +237,17 @@ __global__ void EmulatedDeadlocking::EmulatedDeadlockSpinning(
     }
     __syncthreads();
 
-    LocalScanDeviceBroadcastEmulatedDeadlock(s_reduction, threadBlockReduction, partitionIndex);
+    LocalScanDeviceBroadcastEmulatedDeadlock(
+        s_reduction,
+        threadBlockReduction,
+        partitionIndex,
+        partMask);
 
     if (partitionIndex)
     {
         Lookback(
             partitionIndex,
+            maxSpinCount,
             s_lock,
             s_broadcast,
             scan,

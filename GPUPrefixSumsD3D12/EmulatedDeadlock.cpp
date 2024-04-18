@@ -10,14 +10,14 @@
 #include "EmulatedDeadlock.h"
 
 EmulatedDeadlock::EmulatedDeadlock(
-	winrt::com_ptr<ID3D12Device> _device,
-	GPUPrefixSums::DeviceInfo _deviceInfo) :
-	GPUPrefixSumBase("EmulatedDeadlock ", 3072, 1 << 13)
+    winrt::com_ptr<ID3D12Device> _device,
+    GPUPrefixSums::DeviceInfo _deviceInfo) :
+    GPUPrefixSumBase("EmulatedDeadlock ", 3072, 1 << 13)
 {
-	m_device.copy_from(_device.get());
-	m_devInfo = _deviceInfo;
+    m_device.copy_from(_device.get());
+    m_devInfo = _deviceInfo;
 
-	Initialize();
+    Initialize();
 }
 
 EmulatedDeadlock::~EmulatedDeadlock()
@@ -75,19 +75,20 @@ void EmulatedDeadlock::TestAll()
 
 void EmulatedDeadlock::InitComputeShaders()
 {
-	const std::filesystem::path path = "Shaders/EmulatedDeadlock.hlsl";
+    const std::filesystem::path path = "Shaders/EmulatedDeadlock.hlsl";
 
-	m_initEmulatedDeadlock = new EmulatedDeadlockKernels::InitEmulatedDeadlock(m_device, m_devInfo, m_compileArguments, path);
-	m_clearIndex = new EmulatedDeadlockKernels::ClearIndex(m_device, m_devInfo, m_compileArguments, path);
-	m_emulateDeadlockFirstPass = new EmulatedDeadlockKernels::EmulatedDeadlockFirstPass(m_device, m_devInfo, m_compileArguments, path);
-	m_emulateDeadlockSecPass = new EmulatedDeadlockKernels::EmulatedDeadlockSecondPass(m_device, m_devInfo, m_compileArguments, path);
+    m_initEmulatedDeadlock = new EmulatedDeadlockKernels::InitEmulatedDeadlock(m_device, m_devInfo, m_compileArguments, path);
+    m_clearIndex = new EmulatedDeadlockKernels::ClearIndex(m_device, m_devInfo, m_compileArguments, path);
+    m_emulateDeadlockFirstPass = new EmulatedDeadlockKernels::EmulatedDeadlockFirstPass(m_device, m_devInfo, m_compileArguments, path);
+    m_emulateDeadlockSecPass = new EmulatedDeadlockKernels::EmulatedDeadlockSecondPass(m_device, m_devInfo, m_compileArguments, path);
+    m_thrasher = new EmulatedDeadlockKernels::Thrasher(m_device, m_devInfo, m_compileArguments, path);
 }
 
 void EmulatedDeadlock::DisposeBuffers()
 {
-	m_scanBuffer = nullptr;
-	m_threadBlockReductionBuffer = nullptr;
-	m_scanValidationBuffer = nullptr;
+    m_scanBuffer = nullptr;
+    m_threadBlockReductionBuffer = nullptr;
+    m_scanValidationBuffer = nullptr;
 }
 
 void EmulatedDeadlock::InitStaticBuffers()

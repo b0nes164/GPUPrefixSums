@@ -8,6 +8,8 @@
  *
  ******************************************************************************/
 #pragma once
+#include <fstream>
+#include <string>
 #include "EmulatedDeadlocking.cuh"
 #include "UtilityKernels.cuh"
 
@@ -35,7 +37,7 @@ public:
 
     //Tests input sizes not perfect multiples of the partition tile size,
     //then tests several large inputs.
-    void TestAllInclusive()
+    void TestAllInclusive(uint32_t partMask, uint32_t maxSpinCount)
     {
         if (k_maxSize < (1 << 28))
         {
@@ -49,7 +51,7 @@ public:
         for (uint32_t i = k_partitionSize; i < k_partitionSize * 2 + 1; ++i)
         {
             InitOne << <256, 256 >> > (m_scan, i);
-            DispatchKernelsInclusive(i);
+            DispatchKernelsInclusive(i, partMask, maxSpinCount);
             if (DispatchValidateInclusive(i))
                 testsPassed++;
             else
@@ -63,7 +65,7 @@ public:
         for (uint32_t i = 26; i <= 28; ++i)
         {
             InitOne << <256, 256 >> > (m_scan, i);
-            DispatchKernelsInclusive(1 << i);
+            DispatchKernelsInclusive(1 << i, partMask, maxSpinCount);
             if (DispatchValidateInclusive(i))
                 testsPassed++;
             else
@@ -76,12 +78,12 @@ public:
             printf("%u/%u Test failed.\n\n", testsPassed, k_partitionSize + 3 + 1);
     }
 
-    void BatchTimingInclusive(uint32_t size, uint32_t batchCount)
+    double BatchTimingInclusive(uint32_t size, uint32_t batchCount, uint32_t partMask, uint32_t maxSpinCount)
     {
         if (size > k_maxSize)
         {
             printf("Error, requested test size exceeds max initialized size. \n");
-            return;
+            return 0.0;
         }
 
         printf("Beginning GPUPrefixSums ChainedScanDecoupledLookback inclusive batch timing test at:\n");
@@ -99,7 +101,7 @@ public:
             InitOne << <256, 256 >> > (m_scan, size);
             cudaDeviceSynchronize();
             cudaEventRecord(start);
-            DispatchKernelsInclusive(size);
+            DispatchKernelsInclusive(size, partMask, maxSpinCount);
             cudaEventRecord(stop);
             cudaEventSynchronize(stop);
 
@@ -116,6 +118,27 @@ public:
         totalTime /= 1000.0f;
         printf("Total time elapsed: %f\n", totalTime);
         printf("Estimated speed at %u 32-bit elements: %E keys/sec\n\n", size, size / totalTime * batchCount);
+
+        return size / totalTime * batchCount;
+    }
+
+    void BatchTimingInclusive(uint32_t size, uint32_t batchCount)
+    {
+        BatchTimingInclusive(size, batchCount, 1, 8);
+    }
+
+    void RecordTimingData(uint32_t spinCount)
+    {
+        std::ofstream writer;
+        writer.open("data.txt");
+        writer << "Max Spin Count: " << spinCount << "\n";
+        for (uint32_t i = 512; i >= 64; i >>= 1)
+        {
+            double t = BatchTimingInclusive(1 << 28, 250, i - 1, spinCount);
+            writer << t << "\n";
+        }
+
+        writer.close();
     }
 
     ~EmulatedDeadlockingDispatcher()
@@ -148,7 +171,7 @@ private:
         cudaMemset(m_threadBlockReduction, 0, threadBlocks * sizeof(uint32_t));
     }
 
-    void DispatchKernelsInclusive(uint32_t size)
+    void DispatchKernelsInclusive(uint32_t size, uint32_t partMask, uint32_t maxSpinCount)
     {
         uint32_t alignedSize = align16(size);
         uint32_t vectorizedSize = vectorizeAlignedSize(alignedSize);
@@ -159,7 +182,7 @@ private:
         cudaDeviceSynchronize();
 
         EmulatedDeadlocking::EmulatedDeadlockSpinning<<<threadBlocks, k_csdlThreads>>>(m_scan, m_threadBlockReduction,
-            m_index, vectorizedSize);
+            m_index, vectorizedSize, partMask, maxSpinCount);
     }
 
     bool DispatchValidateInclusive(uint32_t size)

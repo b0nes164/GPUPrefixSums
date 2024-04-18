@@ -331,3 +331,71 @@ void EmulatedDeadlockSecondPass(uint gtid : SV_GroupThreadID)
             DownSweepPartial(gtid.x, partitionIndex, prevReduction);
     }
 }
+
+[numthreads(128, 1, 1)]
+void Thrasher(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{
+    if (!gtid.x)
+        InterlockedAdd(b_index[0], 1, g_broadcast);
+    GroupMemoryBarrierWithGroupSync();
+    const uint partIndex = g_broadcast;
+    
+    if (!(partIndex & 1))
+    {
+        while (b_threadBlockReduction[partIndex] == 0)
+        {
+            DeviceMemoryBarrierWithGroupSync();
+        }
+    }
+    else
+    {
+        InterlockedCompareStore(b_threadBlockReduction[partIndex], 0, partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE);
+    }
+    
+    if (!gtid.x && partIndex)
+    {
+        bool success = true;
+        uint index = partIndex - 1;
+        uint spinCount = 0;
+        
+        while (success)
+        {
+            while (spinCount < MAX_SPIN_COUNT)
+            {
+                uint flag = b_threadBlockReduction[index];
+                if (flag > FLAG_NOT_READY)
+                {
+                    if (flag == FLAG_INCLUSIVE)
+                    {
+                        InterlockedAdd(b_threadBlockReduction[partIndex], 1);
+                        success = false;
+                        break;
+                    }
+                    else
+                    {
+                        index--;
+                    }
+                }
+                else
+                {
+                    spinCount++;
+                }
+            }
+        
+            if (success)
+            {
+                InterlockedCompareStore(b_threadBlockReduction[index], 0, index ? FLAG_REDUCTION : FLAG_INCLUSIVE);
+                if (index)
+                {
+                    index--;
+                    spinCount = 0;
+                }
+                else
+                {
+                    InterlockedAdd(b_threadBlockReduction[partIndex], 1);
+                    success = false;
+                }
+            }
+        }
+    }
+}

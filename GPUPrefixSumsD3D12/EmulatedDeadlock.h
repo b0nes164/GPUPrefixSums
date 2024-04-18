@@ -20,6 +20,7 @@ class EmulatedDeadlock : public GPUPrefixSumBase
     EmulatedDeadlockKernels::ClearIndex* m_clearIndex;
     EmulatedDeadlockKernels::EmulatedDeadlockFirstPass* m_emulateDeadlockFirstPass;
     EmulatedDeadlockKernels::EmulatedDeadlockSecondPass* m_emulateDeadlockSecPass;
+    EmulatedDeadlockKernels::Thrasher* m_thrasher;
 
 public:
     EmulatedDeadlock(

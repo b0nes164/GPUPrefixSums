@@ -254,4 +254,55 @@ namespace EmulatedDeadlockKernels
             return rootParameters;
         }
     };
+
+    class Thrasher : ComputeKernelBase
+    {
+    public:
+        Thrasher(
+            winrt::com_ptr<ID3D12Device> device,
+            const GPUPrefixSums::DeviceInfo& info,
+            const std::vector<std::wstring>& compileArguments,
+            const std::filesystem::path& shaderPath) :
+            ComputeKernelBase(
+                device,
+                info,
+                shaderPath,
+                L"Thrasher",
+                compileArguments,
+                CreateRootParameters())
+        {
+        }
+
+        void Dispatch(
+            winrt::com_ptr<ID3D12GraphicsCommandList> cmdList,
+            const D3D12_GPU_VIRTUAL_ADDRESS& scanBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& indexBuffer,
+            const D3D12_GPU_VIRTUAL_ADDRESS& threadBlockReductionBuffer,
+            const uint32_t& vectorizedSize,
+            const uint32_t& threadBlocks)
+        {
+            std::array<uint32_t, 4> t = {
+                    vectorizedSize,
+                    threadBlocks,
+                    0,
+                    0 };
+            SetPipelineState(cmdList);
+            cmdList->SetComputeRoot32BitConstants(0, 4, t.data(), 0);
+            cmdList->SetComputeRootUnorderedAccessView(1, scanBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(2, indexBuffer);
+            cmdList->SetComputeRootUnorderedAccessView(3, threadBlockReductionBuffer);
+            cmdList->Dispatch(threadBlocks, 1, 1);
+        }
+
+    protected:
+        const std::vector<CD3DX12_ROOT_PARAMETER1> CreateRootParameters() override
+        {
+            auto rootParameters = std::vector<CD3DX12_ROOT_PARAMETER1>(4);
+            rootParameters[0].InitAsConstants(4, 0);
+            rootParameters[1].InitAsUnorderedAccessView((UINT)Reg::Scan);
+            rootParameters[2].InitAsUnorderedAccessView((UINT)Reg::Index);
+            rootParameters[3].InitAsUnorderedAccessView((UINT)Reg::ThreadBlockReduction);
+            return rootParameters;
+        }
+    };
 }
