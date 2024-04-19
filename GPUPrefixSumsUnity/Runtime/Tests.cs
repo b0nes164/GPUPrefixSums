@@ -16,7 +16,7 @@ namespace GPUPrefixSums.Runtime
     public class Tests : MonoBehaviour
     {
         [SerializeField]
-        ComputeShader csdl;
+        ComputeShader csdldf;
 
         [SerializeField]
         ComputeShader rts;
@@ -35,7 +35,7 @@ namespace GPUPrefixSums.Runtime
 
         private CommandBuffer m_cmd;
 
-        private ChainedScanDecoupledLookback m_csdl;
+        private ChainedScanDecoupledLookbackDecoupledFallback m_csdldf;
         private ReduceThenScan m_rts;
 
         private bool m_isValid;
@@ -96,10 +96,10 @@ namespace GPUPrefixSums.Runtime
             scanValidation = new ComputeBuffer(1 << 18, sizeof(uint) * 4);
         }
 
-        private void InitCSDL()
+        private void InitCSDLDF()
         {
-            m_csdl = new ChainedScanDecoupledLookback(
-                csdl,
+            m_csdldf = new ChainedScanDecoupledLookbackDecoupledFallback(
+                csdldf,
                 1 << 28,
                 ref threadBlockReduction,
                 ref index);
@@ -185,10 +185,10 @@ namespace GPUPrefixSums.Runtime
             }
         }
 
-        private bool CSDLTestOneInclusive(int testSize)
+        private bool CSDLDFTestOneInclusive(int testSize)
         {
             PreScan(testSize, false);
-            m_csdl.PrefixSumInclusive(
+            m_csdldf.PrefixSumInclusive(
                 testSize,
                 scan,
                 threadBlockReduction,
@@ -196,10 +196,10 @@ namespace GPUPrefixSums.Runtime
             return PostScan(false, true, false);
         }
 
-        private bool CSDLTestOneExclusive(int testSize)
+        private bool CSDLDFTestOneExclusive(int testSize)
         {
             PreScan(testSize, false);
-            m_csdl.PrefixSumExclusive(
+            m_csdldf.PrefixSumExclusive(
                 testSize,
                 scan,
                 threadBlockReduction,
@@ -207,10 +207,10 @@ namespace GPUPrefixSums.Runtime
             return PostScan(false, false, false);
         }
 
-        private bool CSDLTestRandomInclusive(int testSize)
+        private bool CSDLDFTestRandomInclusive(int testSize)
         {
             PreScan(testSize, true);
-            m_csdl.PrefixSumInclusive(
+            m_csdldf.PrefixSumInclusive(
                 testSize,
                 scan,
                 threadBlockReduction,
@@ -218,10 +218,10 @@ namespace GPUPrefixSums.Runtime
             return PostScan(true, true, false);
         }
 
-        private bool CSDLTestRandomExclusive(int testSize)
+        private bool CSDLDFTestRandomExclusive(int testSize)
         {
             PreScan(testSize, true);
-            m_csdl.PrefixSumExclusive(
+            m_csdldf.PrefixSumExclusive(
                 testSize,
                 scan,
                 threadBlockReduction,
@@ -229,11 +229,11 @@ namespace GPUPrefixSums.Runtime
             return PostScan(true, false, false);
         }
 
-        private bool CSDLTestOneInclusiveCmd(int testSize)
+        private bool CSDLDFTestOneInclusiveCmd(int testSize)
         {
             PreScan(testSize, false);
             m_cmd.Clear();
-            m_csdl.PrefixSumInclusive(
+            m_csdldf.PrefixSumInclusive(
                 m_cmd,
                 testSize,
                 scan,
@@ -243,11 +243,11 @@ namespace GPUPrefixSums.Runtime
             return PostScan(false, true, false);
         }
 
-        private bool CSDLTestOneExclusiveCmd(int testSize)
+        private bool CSDLDFTestOneExclusiveCmd(int testSize)
         {
             PreScan(testSize, false);
             m_cmd.Clear();
-            m_csdl.PrefixSumExclusive(
+            m_csdldf.PrefixSumExclusive(
                 m_cmd,
                 testSize,
                 scan,
@@ -257,11 +257,11 @@ namespace GPUPrefixSums.Runtime
             return PostScan(false, false, false);
         }
 
-        private bool CSDLTestRandomInclusiveCmd(int testSize)
+        private bool CSDLDFTestRandomInclusiveCmd(int testSize)
         {
             PreScan(testSize, true);
             m_cmd.Clear();
-            m_csdl.PrefixSumInclusive(
+            m_csdldf.PrefixSumInclusive(
                 m_cmd,
                 testSize,
                 scan,
@@ -271,11 +271,11 @@ namespace GPUPrefixSums.Runtime
             return PostScan(true, true, false);
         }
 
-        private bool CSDLTestRandomExclusiveCmd(int testSize)
+        private bool CSDLDFTestRandomExclusiveCmd(int testSize)
         {
             PreScan(testSize, true);
             m_cmd.Clear();
-            m_csdl.PrefixSumExclusive(
+            m_csdldf.PrefixSumExclusive(
                 m_cmd,
                 testSize,
                 scan,
@@ -388,24 +388,24 @@ namespace GPUPrefixSums.Runtime
                 Debug.LogError(passed + " / " + expected + " " + testName + " test failed.");
         }
 
-        private IEnumerator CSDLTest()
+        private IEnumerator CSDLDFTest()
         {
-            int totalCSDLTestsPassed = 0;
+            int totalCSDLDFTestsPassed = 0;
 
-            int csdlInclusiveOnePassed = 0;
-            int csdlExclusiveOnePassed = 0;
-            int csdlInclusiveRandomPassed = 0;
-            int csdlExclusiveRandomPassed = 0;
+            int csdldfInclusiveOnePassed = 0;
+            int csdldfExclusiveOnePassed = 0;
+            int csdldfInclusiveRandomPassed = 0;
+            int csdldfExclusiveRandomPassed = 0;
 
-            int csdlInclusiveOnePassedCmd = 0;
-            int csdlExclusiveOnePassedCmd = 0;
-            int csdlInclusiveRandomPassedCmd = 0;
-            int csdlExclusiveRandomPassedCmd = 0;
+            int csdldfInclusiveOnePassedCmd = 0;
+            int csdldfExclusiveOnePassedCmd = 0;
+            int csdldfInclusiveRandomPassedCmd = 0;
+            int csdldfExclusiveRandomPassedCmd = 0;
 
-            int csdlInclusiveOneSplitPassed = 0;
-            int csdlExclusiveOneSplitPassed = 0;
-            int csdlInclusiveOneSplitPassedCmd = 0;
-            int csdlExclusiveOneSplitPassedCmd = 0;
+            int csdldfInclusiveOneSplitPassed = 0;
+            int csdldfExclusiveOneSplitPassed = 0;
+            int csdldfInclusiveOneSplitPassedCmd = 0;
+            int csdldfExclusiveOneSplitPassedCmd = 0;
 
             const int passStart1 = 1 << 25;
             const int passEnd1 = (1 << 25) + k_partitionSize;
@@ -423,107 +423,107 @@ namespace GPUPrefixSums.Runtime
             //One
             for (int i = passStart1; i < passEnd1; i += 4)
             {
-                yield return csdlInclusiveOnePassed +=
-                    CSDLTestOneInclusive(i) ? 1 : 0;
+                yield return csdldfInclusiveOnePassed +=
+                    CSDLDFTestOneInclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveOnePassed;
-            PrintTestResults(csdlInclusiveOnePassed, expected, "CSDL One Inclusive");
+            totalCSDLDFTestsPassed += csdldfInclusiveOnePassed;
+            PrintTestResults(csdldfInclusiveOnePassed, expected, "CSDLDF One Inclusive");
 
             for (int i = passStart1; i < passEnd1; i += 4)
             {
-                yield return csdlExclusiveOnePassed +=
-                    CSDLTestOneExclusive(i) ? 1 : 0;
+                yield return csdldfExclusiveOnePassed +=
+                    CSDLDFTestOneExclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveOnePassed;
-            PrintTestResults(csdlExclusiveOnePassed, expected, "CSDL One Exclusive");
+            totalCSDLDFTestsPassed += csdldfExclusiveOnePassed;
+            PrintTestResults(csdldfExclusiveOnePassed, expected, "CSDLDF One Exclusive");
 
             for (int i = passStart1; i < passEnd1; i += 4)
             {
-                yield return csdlInclusiveOnePassedCmd +=
-                    CSDLTestOneInclusiveCmd(i) ? 1 : 0;
+                yield return csdldfInclusiveOnePassedCmd +=
+                    CSDLDFTestOneInclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveOnePassedCmd;
-            PrintTestResults(csdlInclusiveOnePassedCmd, expected, "CSDL One Inclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfInclusiveOnePassedCmd;
+            PrintTestResults(csdldfInclusiveOnePassedCmd, expected, "CSDLDF One Inclusive Cmd");
 
             for (int i = passStart1; i < passEnd1; i += 4)
             {
-                yield return csdlExclusiveOnePassedCmd +=
-                    CSDLTestOneExclusiveCmd(i) ? 1 : 0;
+                yield return csdldfExclusiveOnePassedCmd +=
+                    CSDLDFTestOneExclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveOnePassedCmd;
-            PrintTestResults(csdlExclusiveOnePassedCmd, expected, "CSDL One Exclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfExclusiveOnePassedCmd;
+            PrintTestResults(csdldfExclusiveOnePassedCmd, expected, "CSDLDF One Exclusive Cmd");
 
             //Random
             for (int i = passStart2; i < passEnd2; i += 4)
             {
-                yield return csdlInclusiveRandomPassed +=
-                    CSDLTestRandomInclusive(i) ? 1 : 0;
+                yield return csdldfInclusiveRandomPassed +=
+                    CSDLDFTestRandomInclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveRandomPassed;
-            PrintTestResults(csdlInclusiveRandomPassed, expected, "CSDL Random Inclusive");
+            totalCSDLDFTestsPassed += csdldfInclusiveRandomPassed;
+            PrintTestResults(csdldfInclusiveRandomPassed, expected, "CSDLDF Random Inclusive");
 
             for (int i = passStart2; i < passEnd2; i += 4)
             {
-                yield return csdlExclusiveRandomPassed +=
-                    CSDLTestRandomExclusive(i) ? 1 : 0;
+                yield return csdldfExclusiveRandomPassed +=
+                    CSDLDFTestRandomExclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveRandomPassed;
-            PrintTestResults(csdlExclusiveRandomPassed, expected, "CSDL Random Exclusive");
+            totalCSDLDFTestsPassed += csdldfExclusiveRandomPassed;
+            PrintTestResults(csdldfExclusiveRandomPassed, expected, "CSDLDF Random Exclusive");
 
             for (int i = passStart2; i < passEnd2; i += 4)
             {
-                yield return csdlInclusiveRandomPassedCmd +=
-                    CSDLTestRandomInclusiveCmd(i) ? 1 : 0;
+                yield return csdldfInclusiveRandomPassedCmd +=
+                    CSDLDFTestRandomInclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveRandomPassedCmd;
-            PrintTestResults(csdlInclusiveRandomPassedCmd, expected, "CSDL Random Inclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfInclusiveRandomPassedCmd;
+            PrintTestResults(csdldfInclusiveRandomPassedCmd, expected, "CSDLDF Random Inclusive Cmd");
 
             for (int i = passStart2; i < passEnd2; i += 4)
             {
-                yield return csdlExclusiveRandomPassedCmd +=
-                    CSDLTestRandomExclusiveCmd(i) ? 1 : 0;
+                yield return csdldfExclusiveRandomPassedCmd +=
+                    CSDLDFTestRandomExclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveRandomPassedCmd;
-            PrintTestResults(csdlExclusiveRandomPassedCmd, expected, "CSDL Random Exclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfExclusiveRandomPassedCmd;
+            PrintTestResults(csdldfExclusiveRandomPassedCmd, expected, "CSDLDF Random Exclusive Cmd");
 
             //Very Large/Split testing
             for (int i = passStart3; i < passEnd3; i += 4)
             {
-                yield return csdlInclusiveOneSplitPassed +=
-                    CSDLTestOneInclusive(i) ? 1 : 0;
+                yield return csdldfInclusiveOneSplitPassed +=
+                    CSDLDFTestOneInclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveOneSplitPassed;
-            PrintTestResults(csdlInclusiveOneSplitPassed, splitExpected, "CSDL Split Inclusive");
+            totalCSDLDFTestsPassed += csdldfInclusiveOneSplitPassed;
+            PrintTestResults(csdldfInclusiveOneSplitPassed, splitExpected, "CSDLDF Split Inclusive");
 
             for (int i = passStart3; i < passEnd3; i += 4)
             {
-                yield return csdlExclusiveOneSplitPassed +=
-                    CSDLTestOneExclusive(i) ? 1 : 0;
+                yield return csdldfExclusiveOneSplitPassed +=
+                    CSDLDFTestOneExclusive(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveOneSplitPassed;
-            PrintTestResults(csdlExclusiveOneSplitPassed, splitExpected, "CSDL Split Exclusive");
+            totalCSDLDFTestsPassed += csdldfExclusiveOneSplitPassed;
+            PrintTestResults(csdldfExclusiveOneSplitPassed, splitExpected, "CSDLDF Split Exclusive");
 
             for (int i = passStart3; i < passEnd3; i += 4)
             {
-                yield return csdlInclusiveOneSplitPassedCmd +=
-                    CSDLTestOneInclusiveCmd(i) ? 1 : 0;
+                yield return csdldfInclusiveOneSplitPassedCmd +=
+                    CSDLDFTestOneInclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlInclusiveOneSplitPassedCmd;
-            PrintTestResults(csdlInclusiveOneSplitPassedCmd, splitExpected, "CSDL Split Inclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfInclusiveOneSplitPassedCmd;
+            PrintTestResults(csdldfInclusiveOneSplitPassedCmd, splitExpected, "CSDLDF Split Inclusive Cmd");
 
             for (int i = passStart3; i < passEnd3; i += 4)
             {
-                yield return csdlExclusiveOneSplitPassedCmd +=
-                    CSDLTestOneExclusiveCmd(i) ? 1 : 0;
+                yield return csdldfExclusiveOneSplitPassedCmd +=
+                    CSDLDFTestOneExclusiveCmd(i) ? 1 : 0;
             }
-            totalCSDLTestsPassed += csdlExclusiveOneSplitPassedCmd;
-            PrintTestResults(csdlExclusiveOneSplitPassedCmd, splitExpected, "CSDL Split Exclusive Cmd");
+            totalCSDLDFTestsPassed += csdldfExclusiveOneSplitPassedCmd;
+            PrintTestResults(csdldfExclusiveOneSplitPassedCmd, splitExpected, "CSDLDF Split Exclusive Cmd");
 
-            Debug.Log("CSDL TESTS COMPLETED");
-            if (totalCSDLTestsPassed == totalExpected)
-                Debug.Log(totalExpected + " / " + totalExpected + " ALL CSDL TESTS PASSED");
+            Debug.Log("CSDLDF TESTS COMPLETED");
+            if (totalCSDLDFTestsPassed == totalExpected)
+                Debug.Log(totalExpected + " / " + totalExpected + " ALL CSDLDF TESTS PASSED");
             else
-                Debug.LogError(totalCSDLTestsPassed + " / " + totalExpected + " CSDL TEST FAILED");
+                Debug.LogError(totalCSDLDFTestsPassed + " / " + totalExpected + " CSDLDF TEST FAILED");
 
             //Sanity check
             /*uint[] sanity = new uint[scan.count];
@@ -680,9 +680,9 @@ namespace GPUPrefixSums.Runtime
 
         private IEnumerator TestAll()
         {
-            Debug.Log("Beginning Chained Scan Decoupled Lookback Test All");
-            InitCSDL();
-            yield return StartCoroutine(CSDLTest());
+            Debug.Log("Beginning Chained Scan Decoupled Lookback Decoupled Fallback Test All");
+            InitCSDLDF();
+            yield return StartCoroutine(CSDLDFTest());
 
             Debug.Log("Beginning Reduce Then Scan Test All");
             InitRTS();

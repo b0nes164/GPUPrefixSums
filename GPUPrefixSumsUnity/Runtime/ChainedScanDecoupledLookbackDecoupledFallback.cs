@@ -12,7 +12,7 @@ using UnityEngine.Assertions;
 
 namespace GPUPrefixSums.Runtime
 {
-    public class ChainedScanDecoupledLookback : GPUPrefixSumsBase
+    public class ChainedScanDecoupledLookbackDecoupledFallback : GPUPrefixSumsBase
     {
         private readonly int m_kernelInit = -1;
         private readonly int m_kernelInclusive = -1;
@@ -20,7 +20,7 @@ namespace GPUPrefixSums.Runtime
 
         private readonly bool m_isValid;
 
-        public ChainedScanDecoupledLookback(
+        public ChainedScanDecoupledLookbackDecoupledFallback(
             ComputeShader compute,
             int maxElements,
             ref ComputeBuffer tempBuffer0,
@@ -29,9 +29,9 @@ namespace GPUPrefixSums.Runtime
             m_cs = compute;
             if (m_cs)
             {
-                m_kernelInit = m_cs.FindKernel("InitChainedScan");
-                m_kernelInclusive = m_cs.FindKernel("ChainedScanDecoupledLookbackInclusive");
-                m_kernelExclusive = m_cs.FindKernel("ChainedScanDecoupledLookbackExclusive");
+                m_kernelInit = m_cs.FindKernel("InitCSDLDF");
+                m_kernelInclusive = m_cs.FindKernel("ChainedScanDecoupledLookbackDecoupledFallbackInclusive");
+                m_kernelExclusive = m_cs.FindKernel("ChainedScanDecoupledLookbackDecoupledFallbackExclusive");
             }
 
             m_isValid = m_kernelInit >= 0 &&
@@ -235,7 +235,7 @@ namespace GPUPrefixSums.Runtime
                 cmd.DispatchCompute(m_cs, m_kernelExclusive, partialBlocks, 1, 1);
         }
 
-        ~ChainedScanDecoupledLookback()
+        ~ChainedScanDecoupledLookbackDecoupledFallback()
         {
 
         }

@@ -296,10 +296,10 @@ void DownsweepInclusive(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, flattenedGid);
+        LocalScanInclusiveWGE16(gtid.x);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, flattenedGid);
+        LocalScanInclusiveWLT16(gtid.x);
     GroupMemoryBarrierWithGroupSync();
     
     prevReduction += gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0;
@@ -327,10 +327,10 @@ void DownsweepExclusive(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
     GroupMemoryBarrierWithGroupSync();
     
     if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x, flattenedGid);
+        LocalScanInclusiveWGE16(gtid.x);
     
     if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x, flattenedGid);
+        LocalScanInclusiveWLT16(gtid.x);
     GroupMemoryBarrierWithGroupSync();
     
     prevReduction += gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0;
