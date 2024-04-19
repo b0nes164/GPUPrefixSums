@@ -1,6 +1,8 @@
 # GPU Prefix Sums
 
-GPUPrefixSums aims to bring state-of-the-art GPU prefix sum techniques from CUDA and make them available in portable compute shaders. In addition to this, it contributes "Decoupled Fallback," a novel fallback technique for Chained Scan with Decoupled Lookback that should allow devices without forward thread progress guarantees to perform the scan without crashing. Finally, the D3D12 implementation includes an extensive survey of GPU prefix sums, ranging from the warp to the device level. All included algorithms utilize wave/warp/subgroup (referred to as "wave" hereon) level parallelism but are completely agnostic of wave size. As a measure of the quality of the code, GPUPrefixSums has also been implemented in CUDA and benchmarked against Nvidia's [CUB](https://github.com/NVIDIA/cccl) library. Although GPUPrefixSums aims to be portable to any wave size supported by HLSL, [4, 128], due to hardware limitations, it has only been tested on wave sizes 4, 16, 32, and 64. You have been warned!
+![GPUPrefixSums vs CUB Roundup](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/ec2ce84d-a06a-4d7b-969d-52d851025220)
+
+GPUPrefixSums aims to bring state-of-the-art GPU prefix sum techniques from CUDA and make them available in portable compute shaders. In addition to this, it contributes "Decoupled Fallback," a novel fallback technique for Chained Scan with Decoupled Lookback that should allow devices without forward thread progress guarantees to perform the scan without crashing. The D3D12 implementation includes an extensive survey of GPU prefix sums, ranging from the warp to the device level; all included algorithms utilize wave/warp/subgroup (referred to as "wave" hereon) level parallelism but are completely agnostic of wave size. As a measure of the quality of the code, GPUPrefixSums has also been implemented in CUDA and benchmarked against Nvidia's [CUB](https://github.com/NVIDIA/cccl) library. Although GPUPrefixSums aims to be portable to any wave size supported by HLSL, [4, 128], due to hardware limitations, it has only been tested on wave sizes 4, 16, 32, and 64. You have been warned!
 
 If you are interested in prefix sums for their use in radix sorting, check out GPUPrefixSum's sibling repository [GPUSorting](https://github.com/b0nes164/GPUSorting)!
 
@@ -11,6 +13,8 @@ In Decoupled Fallback, a threadblock will spin for a set amount of cycles while 
 As of writing this (4/19/2024), it is unclear whether this method poses any advantages over the "scalar fallback" method first proprosed by Levien [here](https://raphlinus.github.io/gpu/2021/11/17/prefix-sum-portable.html). More testing is required.
 
 # Survey
+
+![Prefix](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/de5504c4-42a9-494f-b707-cbdf66c93cc9)
 
 A prefix sum, also called a scan, is a running total of a sequence of numbers at the n-th element. If the prefix sum is inclusive the n-th element is included in that total, if it is exclusive, the n-th element is not included. The prefix sum is one of the most important algorithmic primitives in parallel computing, underpinning everything from [sorting](https://arxiv.org/abs/2206.01784), to [compression](https://arxiv.org/abs/1311.2540), to [graph traversal](https://dl.acm.org/doi/10.1145/2370036.2145832).
 
@@ -33,6 +37,7 @@ The repository folder contains a Visual Studio 2019 project and solution file. U
 * [DirectX 12 Agility SDK](https://www.nuget.org/packages/Microsoft.Direct3D.D3D12)
 * [DirectX Shader Compiler](https://www.nuget.org/packages/Microsoft.Direct3D.DXC/1.8.2403.18)
 * [Microsoft Windows Implementation Library](https://www.nuget.org/packages/Microsoft.Windows.ImplementationLibrary/)
+  
 See the repository wiki for information on running tests.
 
 ## GPUPrefixSumsCUDA
