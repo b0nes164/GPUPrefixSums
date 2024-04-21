@@ -67,7 +67,7 @@ Requirements:
 
 Within the Unity package manager, add a package from git URL and enter:
 
-`https://github.com/b0nes164/GPUPrefixSums.git?path=/GPUPrefixSums`
+`https://github.com/b0nes164/GPUPrefixSums.git?path=/GPUPrefixSumsUnity`
 
 See the repository wiki for information on running tests.
 
