@@ -71,6 +71,15 @@ Within the Unity package manager, add a package from git URL and enter:
 
 See the repository wiki for information on running tests.
 
+## GPUPrefixSumsWGPU
+
+Barebones implementation, mainly to be used as a testbed.
+
+Requirements:
+* wgpu 22.0
+* pollster 0.3
+* bytemuck 1.16.3
+
 # Interesting Reading and Bibliography
 
 Duane Merrill and Michael Garland. “Single-pass Parallel Prefix Scan with De-coupled Lookback”. In: 2016. 
