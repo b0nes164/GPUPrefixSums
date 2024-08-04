@@ -330,7 +330,7 @@ void BlockBrentKungBlellochInclusive(int3 gtid : SV_GroupThreadID)
     {
         --offset;
         DeviceMemoryBarrierWithGroupSync();
-        if (gtid.x < j)
+        if (gtid.x < j - 1)
             b_prefixSum[(((gtid.x << 1) + 3) << offset) - 1] += b_prefixSum[(((gtid.x << 1) + 2) << offset) - 1];
     }
 }
