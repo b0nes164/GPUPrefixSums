@@ -128,7 +128,7 @@ fn main(
     for(var j: u32 = 1u; j < BLOCK_DIM; j <<= 1u){
         offset -= 1u;
         workgroupBarrier();
-        if(threadid.x < j){
+        if(threadid.x < j - 1){
             s_reduce[(((threadid.x << 1u) + 3u) << offset) - 1u] +=
              s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u];
         }

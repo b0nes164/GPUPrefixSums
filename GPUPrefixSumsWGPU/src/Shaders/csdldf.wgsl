@@ -178,7 +178,7 @@ fn main(
                 }
 
                 var offset: u32 = 1;
-                for(var j: u32 = (BLOCK_DIM>> 2u); j > 0u; j >>= 1u){
+                for(var j: u32 = (BLOCK_DIM >> 2u); j > 0u; j >>= 1u){
                     workgroupBarrier();
                     if(threadid.x < j){
                         s_fallback[(((threadid.x << 1u) + 2u) << offset) - 1u] +=
@@ -215,7 +215,7 @@ fn main(
     for(var j: u32 = 1u; j < BLOCK_DIM; j <<= 1u){
         offset -= 1u;
         workgroupBarrier();
-        if(threadid.x < j){
+        if(threadid.x < j - 1){
             s_reduce[(((threadid.x << 1u) + 3u) << offset) - 1u] +=
              s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u];
         }
