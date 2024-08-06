@@ -42,7 +42,7 @@ impl GPUContext{
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+                    required_features: wgpu::Features::TIMESTAMP_QUERY,
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
@@ -53,7 +53,7 @@ impl GPUContext{
 
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("Timestamp Query Set"),
-            count: 2,
+            count: 6,
             ty: wgpu::QueryType::Timestamp,
         });
 
@@ -117,7 +117,7 @@ impl GPUBuffers{
             mapped_at_creation: false,
         });
 
-        let timestamp_size = std::mem::size_of::<u64>() as wgpu::BufferAddress * 2;
+        let timestamp_size = std::mem::size_of::<u64>() as wgpu::BufferAddress * 6;
         let timestamp = gpu.device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("Timestamp"),
             size: timestamp_size,
@@ -409,8 +409,8 @@ fn set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_
             label: Some("Device Scan Pass"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
                 query_set: &gpu.query_set,
-                beginning_of_pass_write_index: Some(0u32),
-                end_of_pass_write_index: Some(1u32) }),
+                beginning_of_pass_write_index: Some(2u32),
+                end_of_pass_write_index: Some(3u32) }),
         });
         dev_scan_pass.set_pipeline(&gpu_shaders._dev_scan.compute_pipeline);
         dev_scan_pass.set_bind_group(0, &gpu_shaders._dev_scan.bind_group, &[]);
@@ -422,8 +422,8 @@ fn set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_
             label: Some("Downsweep Pass"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
                 query_set: &gpu.query_set,
-                beginning_of_pass_write_index: Some(0u32),
-                end_of_pass_write_index: Some(1u32) }),
+                beginning_of_pass_write_index: Some(4u32),
+                end_of_pass_write_index: Some(5u32) }),
         });
         downsweep_pass.set_pipeline(&gpu_shaders._downsweep.compute_pipeline);
         downsweep_pass.set_bind_group(0, &gpu_shaders._downsweep.bind_group, &[]);
@@ -457,7 +457,18 @@ fn _set_csdldf_pass(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gp
     csdldf_pass.dispatch_workgroups(thread_blocks, 1, 1);
 }
 
-async fn time(gpu: &GPUContext, gpu_buffers: &GPUBuffers) -> u64 {
+fn resolve_time_query(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_buffers: &GPUBuffers, pass_count: u32){
+    let entries_to_resolve = pass_count * 2;
+    com_encoder.resolve_query_set(&gpu.query_set, 0..entries_to_resolve, &gpu_buffers.timestamp, 0u64);
+    com_encoder.copy_buffer_to_buffer(
+            &gpu_buffers.timestamp, 
+            0u64, 
+            &gpu_buffers.readback_timestamp, 
+            0u64,
+            entries_to_resolve as u64 * std::mem::size_of::<u64>() as wgpu::BufferAddress);
+}
+
+async fn time(gpu: &GPUContext, gpu_buffers: &GPUBuffers, pass_count: usize) -> u64 {
     let query_slice = gpu_buffers.readback_timestamp.slice(..);
     query_slice.map_async(wgpu::MapMode::Read, |result| {
         result.unwrap();
@@ -465,7 +476,11 @@ async fn time(gpu: &GPUContext, gpu_buffers: &GPUBuffers) -> u64 {
     gpu.device.poll(wgpu::Maintain::wait());
     let query_out = query_slice.get_mapped_range();
     let timestamp: Vec<u64> = bytemuck::cast_slice(&query_out).to_vec();
-    return timestamp[1] - timestamp[0];
+    let mut total_time = 0u64;
+    for i in 0..pass_count{
+        total_time += timestamp[i * 2 + 1] - timestamp[i * 2]
+    }
+    return total_time;
 }
 
 async fn validate(gpu: &GPUContext, gpu_buffers: &GPUBuffers, gpu_shaders: &Shaders) -> bool {
@@ -535,18 +550,12 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
         //_set_csdl_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
         //_set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
         if should_time {
-            command.resolve_query_set(&gpu_context.query_set, 0..2, &gpu_buffers.timestamp, 0u64);
-            command.copy_buffer_to_buffer(
-                &gpu_buffers.timestamp, 
-                0u64, 
-                &gpu_buffers.readback_timestamp, 
-                0u64,
-                2u64 * std::mem::size_of::<u64>() as wgpu::BufferAddress);
+            resolve_time_query(&mut command, &gpu_context, &gpu_buffers, 3u32)
         }
         gpu_context.queue.submit(Some(command.finish()));
         
         if should_time {
-            total_time += time(&gpu_context, &gpu_buffers).await;
+            total_time += time(&gpu_context, &gpu_buffers, 3usize).await;
             gpu_buffers.readback_timestamp.unmap();
         }
 
