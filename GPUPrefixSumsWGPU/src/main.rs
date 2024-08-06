@@ -389,7 +389,7 @@ fn set_validate_pass(com_encoder: &mut wgpu::CommandEncoder, gpu_shaders: &Shade
     valid_pass.dispatch_workgroups(256, 1, 1);
 }
 
-fn set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
+fn _set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
     {
         let mut red_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
             label: Some("Reduce Pass"),
@@ -504,7 +504,9 @@ async fn validate(gpu: &GPUContext, gpu_buffers: &GPUBuffers, gpu_shaders: &Shad
     gpu.device.poll(wgpu::Maintain::wait());
     let data = readback_slice.get_mapped_range();
     let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
-    //println!("{}", data_out[0]);
+    if data_out[0] != 0 {
+        println!("{}", data_out[0]);
+    }
     return data_out[0] == 0;
 }
 
@@ -546,16 +548,16 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
         });
     
         init_buffers(&mut command, &gpu_shaders);
-        set_rts_passes(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
+        //set_rts_passes(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
         //_set_csdl_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
-        //_set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
+        _set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
         if should_time {
-            resolve_time_query(&mut command, &gpu_context, &gpu_buffers, 3u32)
+            resolve_time_query(&mut command, &gpu_context, &gpu_buffers, 1u32)
         }
         gpu_context.queue.submit(Some(command.finish()));
         
         if should_time {
-            total_time += time(&gpu_context, &gpu_buffers, 3usize).await;
+            total_time += time(&gpu_context, &gpu_buffers, 1usize).await;
             gpu_buffers.readback_timestamp.unmap();
         }
 
@@ -591,6 +593,6 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
 }
 
 fn main() {
-    pollster::block_on(run(false, true, 1024, 1 << 25, 100));
+    pollster::block_on(run(false, true, 1024, 1 << 25, 500));
     println!("OK!");
 }

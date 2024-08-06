@@ -146,15 +146,15 @@ fn main(
             if(s_lock == LOCKED){
                 //Full
                 let fallback_index = s_broadcast;
-                let dev_offset = partition_index * PART_SIZE;
-                if(partition_index < griddim.x - 1u){
+                let dev_offset = fallback_index * PART_SIZE;
+                if(fallback_index < griddim.x - 1u){
                     for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
                         s_scan[i] = scan[i + dev_offset];
                     }
                 }
 
                 //Partial
-                if(partition_index == griddim.x - 1u){
+                if(fallback_index == griddim.x - 1u){
                     let final_part_size = size - dev_offset;
                     for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
                         s_scan[i] = scan[i + dev_offset];
