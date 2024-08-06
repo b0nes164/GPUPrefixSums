@@ -8,7 +8,7 @@
  ******************************************************************************/
 use wgpu::util::DeviceExt;
 
-const PART_SIZE: u32 = 3328;    //256 * 32
+const PART_SIZE: u32 = 3328;    //256 * 13
 
 fn div_round_up(x: u32, y: u32) -> u32 {
     return (x + y - 1) / y;
@@ -28,7 +28,7 @@ impl GPUContext{
             dx12_shader_compiler: wgpu::Dx12Compiler::default(),
             gles_minor_version: wgpu::Gles3MinorVersion::default(),
         });
-    
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -80,7 +80,7 @@ impl GPUBuffers{
     fn init(gpu: &GPUContext, size: usize) -> Self{
 
         //no push constants...
-        let thread_blocks =div_round_up(size as u32, PART_SIZE) as usize * std::mem::size_of::<u32>();
+        let thread_blocks = div_round_up(size as u32, PART_SIZE);
         let info_info: Vec<u32> = vec![size as u32, thread_blocks as u32]; 
         let info = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
             label: Some("Info"),
@@ -105,7 +105,7 @@ impl GPUBuffers{
 
         let reduction = gpu.device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("Reduction"),
-            size: thread_blocks as wgpu::BufferAddress,
+            size: (thread_blocks as usize * std::mem::size_of::<u32>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -160,7 +160,7 @@ struct ComputeShader{
 }
 
 impl  ComputeShader{
-    fn init_main(gpu: &GPUContext, gpu_buffers: &GPUBuffers, module: &wgpu::ShaderModule) -> Self{
+    fn init_main(entry_point: &str, gpu: &GPUContext, gpu_buffers: &GPUBuffers, module: &wgpu::ShaderModule) -> Self{
         let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind Group Layout"),
             entries: &[
@@ -240,7 +240,7 @@ impl  ComputeShader{
             label: Some("Compute Pipeline"),
             layout: Some(&pipeline_layout_init),
             module: &module,
-            entry_point: "main",
+            entry_point: entry_point,
             compilation_options: Default::default(),
             cache: Default::default(),
         });
@@ -331,7 +331,9 @@ impl  ComputeShader{
 
 struct Shaders{
     init: ComputeShader,
-    //rts: ComputeShader,
+    _reduce: ComputeShader,
+    _dev_scan: ComputeShader,
+    _downsweep: ComputeShader,
     _csdl: ComputeShader,
     _csdldf: ComputeShader,
     validate: ComputeShader,
@@ -341,17 +343,24 @@ impl Shaders{
     fn init(gpu: &GPUContext, gpu_buffers: &GPUBuffers) -> Self{
         
         let init_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/init.wgsl"));
+        let rts_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/rts.wgsl"));
         let csdl_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
         let csdldf_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
-        let init = ComputeShader::init_main(gpu, gpu_buffers, &init_module);
-        let _csdl = ComputeShader::init_main(gpu, gpu_buffers, &csdl_module);
-        let _csdldf = ComputeShader::init_main(gpu, gpu_buffers, &csdldf_module);
+        let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
+        let _reduce = ComputeShader::init_main("reduce", gpu, gpu_buffers, &rts_module);
+        let _dev_scan = ComputeShader::init_main("device_scan", gpu, gpu_buffers, &rts_module);
+        let _downsweep = ComputeShader::init_main("downsweep", gpu, gpu_buffers, &rts_module);
+        let _csdl = ComputeShader::init_main("main", gpu, gpu_buffers, &csdl_module);
+        let _csdldf = ComputeShader::init_main("main", gpu, gpu_buffers, &csdldf_module);
         let validate = ComputeShader::init_valid(gpu, gpu_buffers, &valid_module);
 
         Shaders{
             init,
+            _reduce,
+            _dev_scan,
+            _downsweep,
             _csdl,
             _csdldf,
             validate,
@@ -380,7 +389,49 @@ fn set_validate_pass(com_encoder: &mut wgpu::CommandEncoder, gpu_shaders: &Shade
     valid_pass.dispatch_workgroups(256, 1, 1);
 }
 
-fn _set_csdl_compute_pass(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
+fn set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
+    {
+        let mut red_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Reduce Pass"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &gpu.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
+        });
+        red_pass.set_pipeline(&gpu_shaders._reduce.compute_pipeline);
+        red_pass.set_bind_group(0, &gpu_shaders._reduce.bind_group, &[]);
+        red_pass.dispatch_workgroups(thread_blocks, 1, 1);
+    }
+
+
+    {
+        let mut dev_scan_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Device Scan Pass"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &gpu.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
+        });
+        dev_scan_pass.set_pipeline(&gpu_shaders._dev_scan.compute_pipeline);
+        dev_scan_pass.set_bind_group(0, &gpu_shaders._dev_scan.bind_group, &[]);
+        dev_scan_pass.dispatch_workgroups(1, 1, 1);
+    }
+
+    {
+        let mut downsweep_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Downsweep Pass"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &gpu.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
+        });
+        downsweep_pass.set_pipeline(&gpu_shaders._downsweep.compute_pipeline);
+        downsweep_pass.set_bind_group(0, &gpu_shaders._downsweep.bind_group, &[]);
+        downsweep_pass.dispatch_workgroups(thread_blocks, 1, 1);
+    }
+}
+
+fn _set_csdl_pass(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
     let mut csdl_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
         label: Some("CSDL Pass"),
         timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
@@ -461,10 +512,10 @@ async fn readback_results(gpu: &GPUContext, gpu_buffers: &GPUBuffers, readback_s
     gpu.device.poll(wgpu::Maintain::wait());
     let data = readback_slice.get_mapped_range();
     let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
-    //println!("{:?}", data_out);
-    for i in 0..PART_SIZE{
-        println!("{} {}", i, data_out[i as usize]);
-    }
+    println!("{:?}", data_out);
+    // for i in 0..readback_size{
+    //     println!("{} {}", i, data_out[i as usize]);
+    // }
 }
 
 pub async fn run(should_readback : bool, should_time : bool, readback_size : u32, size : u32, batch_size : u32){
@@ -480,8 +531,9 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
         });
     
         init_buffers(&mut command, &gpu_shaders);
-        //_set_csdl_compute_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
-        _set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
+        set_rts_passes(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
+        //_set_csdl_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
+        //_set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
         if should_time {
             command.resolve_query_set(&gpu_context.query_set, 0..2, &gpu_buffers.timestamp, 0u64);
             command.copy_buffer_to_buffer(
@@ -530,6 +582,6 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
 }
 
 fn main() {
-    pollster::block_on(run(false, true, 8192, 1 << 25, 100));
+    pollster::block_on(run(false, true, 1024, 1 << 25, 100));
     println!("OK!");
 }
