@@ -104,7 +104,9 @@ fn main(
 
     //Device broadcast
     if(threadid.x == 0u){
-        atomicCompareExchangeWeak(&reduction[partition_index], 0u, s_reduce[BLOCK_DIM - 1u] << 2u |
+        //It doesnt matter if a fallback already inserted,
+        //this is guarunteed to be the same exact value
+        atomicStore(&reduction[partition_index], s_reduce[BLOCK_DIM - 1u] << 2u |
          select(FLAG_INCLUSIVE, FLAG_REDUCTION, partition_index != 0u));
     }
 
@@ -189,16 +191,23 @@ fn main(
                 workgroupBarrier();
 
                 if(threadid.x == 0u){
-                    let prev = atomicCompareExchangeWeak(&reduction[fallback_index], 0u, s_fallback[BLOCK_DIM - 1u] << 2u |
-                        select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_index != 0u));
-
-                    if(prev.exchanged){
-                        prev_reduction += s_fallback[BLOCK_DIM - 1u];
-                    } else {
-                        prev_reduction += prev.old_value >> 2u;
+                    //it doesnt matter which tile inserts, or if multiple insertions are performed
+                    //so long as deadlocker tile didnt begin the downsweep before the fallback
+                    let payload = s_fallback[BLOCK_DIM - 1u] << 2u | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_index != 0u);
+                    let prev = atomicLoad(&reduction[fallback_index]);
+                    if(prev == 0u){
+                        //Max will store when no insertion has been made, but will not overwrite
+                        //a tile which has updated to FLAG_INCLUSIVE
+                        atomicMax(&reduction[fallback_index], payload); 
                     }
 
-                    if(fallback_index == 0u || (prev.old_value & FLAG_MASK) == FLAG_INCLUSIVE){
+                    if((prev & FLAG_MASK) < FLAG_INCLUSIVE){
+                        prev_reduction += s_fallback[BLOCK_DIM - 1u];
+                    } else {
+                        prev_reduction += prev >> 2u;
+                    }
+
+                    if(fallback_index == 0u || (prev & FLAG_MASK) == FLAG_INCLUSIVE){
                         atomicAdd(&reduction[partition_index], prev_reduction << 2u | 1u);
                         s_broadcast = prev_reduction;
                         s_lock = UNLOCKED;

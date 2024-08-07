@@ -505,7 +505,7 @@ async fn validate(gpu: &GPUContext, gpu_buffers: &GPUBuffers, gpu_shaders: &Shad
     let data = readback_slice.get_mapped_range();
     let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
     if data_out[0] != 0 {
-        println!("{}", data_out[0]);
+        println!("Err count {}", data_out[0]);
     }
     return data_out[0] == 0;
 }
@@ -593,6 +593,6 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
 }
 
 fn main() {
-    pollster::block_on(run(false, true, 1024, 1 << 25, 500));
+    pollster::block_on(run(false, true, 1024, 1 << 25, 100));
     println!("OK!");
 }
