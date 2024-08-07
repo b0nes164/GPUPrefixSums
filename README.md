@@ -1,6 +1,6 @@
 # GPU Prefix Sums
 
-![GPUPrefixSums vs CUB Roundup](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/ec2ce84d-a06a-4d7b-969d-52d851025220)
+![Prefix Sum Roundup](https://github.com/user-attachments/assets/a0ecca1d-a18f-4a1d-b8d2-8db130c4be83)
 
 GPUPrefixSums aims to bring state-of-the-art GPU prefix sum techniques from CUDA and make them available in portable compute shaders. In addition to this, it contributes "Decoupled Fallback," a novel fallback technique for Chained Scan with Decoupled Lookback that should allow devices without forward thread progress guarantees to perform the scan without crashing. The D3D12 implementation includes an extensive survey of GPU prefix sums, ranging from the warp to the device level; all included algorithms utilize wave/warp/subgroup (referred to as "wave" hereon) level parallelism but are completely agnostic of wave size. As a measure of the quality of the code, GPUPrefixSums has also been implemented in CUDA and benchmarked against Nvidia's [CUB](https://github.com/NVIDIA/cccl) library. Although GPUPrefixSums aims to be portable to any wave size supported by HLSL, [4, 128], due to hardware limitations, it has only been tested on wave sizes 4, 16, 32, and 64. You have been warned!
 
@@ -73,7 +73,7 @@ See the repository wiki for information on running tests.
 
 ## GPUPrefixSumsWGPU
 
-Barebones implementation, mainly to be used as a testbed.
+Barebones implementation--no vectorization, no wave intrinsics--to be used as a testbed.
 
 Requirements:
 * wgpu 22.0
