@@ -18,6 +18,7 @@ struct GPUContext{
     device: wgpu::Device,
     queue: wgpu::Queue,
     query_set: wgpu::QuerySet,
+    timestamp_freq: f32,
 }
 
 impl GPUContext{
@@ -57,10 +58,13 @@ impl GPUContext{
             ty: wgpu::QueryType::Timestamp,
         });
 
+        let timestamp_freq = queue.get_timestamp_period();
+
         GPUContext {
             device,
             queue,
             query_set,
+            timestamp_freq,
         }
     }
 }
@@ -478,7 +482,7 @@ async fn time(gpu: &GPUContext, gpu_buffers: &GPUBuffers, pass_count: usize) -> 
     let timestamp: Vec<u64> = bytemuck::cast_slice(&query_out).to_vec();
     let mut total_time = 0u64;
     for i in 0..pass_count{
-        total_time += timestamp[i * 2 + 1] - timestamp[i * 2]
+        total_time += u64::wrapping_sub(timestamp[i * 2 + 1], timestamp[i * 2]);
     }
     return total_time;
 }
@@ -579,9 +583,9 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
 
     if should_time{
         let mut f_time = total_time as f64;
-        f_time /= 1000000000f64;
+        f_time /= 1000000000.0f64;
         println!("\nTotal time elapsed: {}", f_time);
-        let speed = ((size as u64) * (batch_size as u64)) as f64 / f_time;
+        let speed = ((size as u64) * (batch_size as u64)) as f64 / (f_time * gpu_context.timestamp_freq as f64);
         println!("Estimated speed {:e} ele/s", speed);
     }
 
@@ -593,6 +597,6 @@ pub async fn run(should_readback : bool, should_time : bool, readback_size : u32
 }
 
 fn main() {
-    pollster::block_on(run(false, true, 1024, 1 << 25, 100));
+    pollster::block_on(run(false, true, 1024, 1 << 25, 1000));
     println!("OK!");
 }
