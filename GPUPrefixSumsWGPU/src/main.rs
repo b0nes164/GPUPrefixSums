@@ -356,10 +356,16 @@ impl Shaders{
     fn init(gpu: &GPUContext, gpu_buffers: &GPUBuffers) -> Self{
         
         let init_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/init.wgsl"));
-        let rts_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/rts.wgsl"));
-        let csdl_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
-        let csdldf_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
-        let memcpy_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
+        let rts_module: wgpu::ShaderModule;
+        let csdl_module: wgpu::ShaderModule;
+        let csdldf_module: wgpu::ShaderModule;
+        let memcpy_module: wgpu::ShaderModule;
+        unsafe{
+            rts_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/rts.wgsl"));
+            csdl_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
+            csdldf_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
+            memcpy_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
+        }
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
         let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
@@ -688,7 +694,7 @@ pub async fn run_the_runner(args : Vec<String>)
     let should_readback = false;
     let should_time = true;
     let readback_size = 1024;
-    let batch_size = 100;
+    let batch_size = 1000;
     tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }
 
