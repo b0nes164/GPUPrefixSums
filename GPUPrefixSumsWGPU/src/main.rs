@@ -7,11 +7,19 @@
  *
  ******************************************************************************/
 use wgpu::util::DeviceExt;
+use std::env;
 
 const PART_SIZE: u32 = 3328;    //256 * 13
 
 fn div_round_up(x: u32, y: u32) -> u32 {
     return (x + y - 1) / y;
+}
+
+enum ScanType{
+    Rts,
+    Csdl,
+    Csdldf,
+    Memcpy,
 }
 
 struct GPUContext{
@@ -335,11 +343,12 @@ impl  ComputeShader{
 
 struct Shaders{
     init: ComputeShader,
-    _reduce: ComputeShader,
-    _dev_scan: ComputeShader,
-    _downsweep: ComputeShader,
-    _csdl: ComputeShader,
-    _csdldf: ComputeShader,
+    reduce: ComputeShader,
+    dev_scan: ComputeShader,
+    downsweep: ComputeShader,
+    csdl: ComputeShader,
+    csdldf: ComputeShader,
+    memcpy: ComputeShader,
     validate: ComputeShader,
 }
 
@@ -350,253 +359,345 @@ impl Shaders{
         let rts_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/rts.wgsl"));
         let csdl_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
         let csdldf_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
+        let memcpy_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
         let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
-        let _reduce = ComputeShader::init_main("reduce", gpu, gpu_buffers, &rts_module);
-        let _dev_scan = ComputeShader::init_main("device_scan", gpu, gpu_buffers, &rts_module);
-        let _downsweep = ComputeShader::init_main("downsweep", gpu, gpu_buffers, &rts_module);
-        let _csdl = ComputeShader::init_main("main", gpu, gpu_buffers, &csdl_module);
-        let _csdldf = ComputeShader::init_main("main", gpu, gpu_buffers, &csdldf_module);
+        let reduce = ComputeShader::init_main("reduce", gpu, gpu_buffers, &rts_module);
+        let dev_scan = ComputeShader::init_main("device_scan", gpu, gpu_buffers, &rts_module);
+        let downsweep = ComputeShader::init_main("downsweep", gpu, gpu_buffers, &rts_module);
+        let csdl = ComputeShader::init_main("main", gpu, gpu_buffers, &csdl_module);
+        let csdldf = ComputeShader::init_main("main", gpu, gpu_buffers, &csdldf_module);
+        let memcpy = ComputeShader::init_main("main", gpu, gpu_buffers, &memcpy_module);
         let validate = ComputeShader::init_valid(gpu, gpu_buffers, &valid_module);
 
         Shaders{
             init,
-            _reduce,
-            _dev_scan,
-            _downsweep,
-            _csdl,
-            _csdldf,
+            reduce,
+            dev_scan,
+            downsweep,
+            csdl,
+            csdldf,
+            memcpy,
             validate,
         }
     }
 }
 
-//TODO rename
-fn init_buffers(com_encoder: &mut wgpu::CommandEncoder, gpu_shaders: &Shaders){
-    let mut init_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-        label: Some("Init Pass"),
-        timestamp_writes: None,
-    });
-    init_pass.set_pipeline(&gpu_shaders.init.compute_pipeline);
-    init_pass.set_bind_group(0, &gpu_shaders.init.bind_group, &[]);
-    init_pass.dispatch_workgroups(256, 1, 1);
+struct Tester{
+    gpu_context: GPUContext,
+    gpu_buffers: GPUBuffers,
+    gpu_shaders: Shaders,
+    size: u32,
+    partitions: u32,
 }
 
-fn set_validate_pass(com_encoder: &mut wgpu::CommandEncoder, gpu_shaders: &Shaders){
-    let mut valid_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-        label: Some("Validate Pass"),
-        timestamp_writes: None,
-    });
-    valid_pass.set_pipeline(&gpu_shaders.validate.compute_pipeline);
-    valid_pass.set_bind_group(0, &gpu_shaders.validate.bind_group, &[]);
-    valid_pass.dispatch_workgroups(256, 1, 1);
-}
+impl Tester{
+    async fn init(size : u32) -> Self{
+        let gpu_context = GPUContext::init().await;
+        let gpu_buffers = GPUBuffers::init(&gpu_context, size as usize);
+        let gpu_shaders = Shaders::init(&gpu_context, &gpu_buffers);
+        let partitions = div_round_up(size, PART_SIZE);
+        Tester{
+            gpu_context,
+            gpu_buffers,
+            gpu_shaders,
+            size,
+            partitions,
+        }
+    }
 
-fn _set_rts_passes(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
-    {
-        let mut red_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-            label: Some("Reduce Pass"),
+    fn set_init_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut init_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Init Pass"),
+            timestamp_writes: None,
+        });
+        init_pass.set_pipeline(&self.gpu_shaders.init.compute_pipeline);
+        init_pass.set_bind_group(0, &self.gpu_shaders.init.bind_group, &[]);
+        init_pass.dispatch_workgroups(256, 1, 1);
+    }
+
+    fn set_validate_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut valid_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Validate Pass"),
+            timestamp_writes: None,
+        });
+        valid_pass.set_pipeline(&self.gpu_shaders.validate.compute_pipeline);
+        valid_pass.set_bind_group(0, &self.gpu_shaders.validate.bind_group, &[]);
+        valid_pass.dispatch_workgroups(256, 1, 1);
+    }
+
+    fn set_rts_passes(&self, com_encoder: &mut wgpu::CommandEncoder){
+        {
+            let mut red_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("Reduce Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(0u32),
+                    end_of_pass_write_index: Some(1u32) }),
+            });
+            red_pass.set_pipeline(&self.gpu_shaders.reduce.compute_pipeline);
+            red_pass.set_bind_group(0, &self.gpu_shaders.reduce.bind_group, &[]);
+            red_pass.dispatch_workgroups(self.partitions, 1, 1);
+        }
+    
+    
+        {
+            let mut dev_scan_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("Device Scan Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(2u32),
+                    end_of_pass_write_index: Some(3u32) }),
+            });
+            dev_scan_pass.set_pipeline(&self.gpu_shaders.dev_scan.compute_pipeline);
+            dev_scan_pass.set_bind_group(0, &self.gpu_shaders.dev_scan.bind_group, &[]);
+            dev_scan_pass.dispatch_workgroups(1, 1, 1);
+        }
+    
+        {
+            let mut downsweep_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("Downsweep Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(4u32),
+                    end_of_pass_write_index: Some(5u32) }),
+            });
+            downsweep_pass.set_pipeline(&self.gpu_shaders.downsweep.compute_pipeline);
+            downsweep_pass.set_bind_group(0, &self.gpu_shaders.downsweep.bind_group, &[]);
+            downsweep_pass.dispatch_workgroups(self.partitions, 1, 1);
+        }
+    }
+
+    fn set_csdl_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut csdl_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("CSDL Pass"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set: &gpu.query_set,
+                query_set: &self.gpu_context.query_set,
                 beginning_of_pass_write_index: Some(0u32),
                 end_of_pass_write_index: Some(1u32) }),
         });
-        red_pass.set_pipeline(&gpu_shaders._reduce.compute_pipeline);
-        red_pass.set_bind_group(0, &gpu_shaders._reduce.bind_group, &[]);
-        red_pass.dispatch_workgroups(thread_blocks, 1, 1);
+        csdl_pass.set_pipeline(&self.gpu_shaders.csdl.compute_pipeline);
+        csdl_pass.set_bind_group(0, &self.gpu_shaders.csdl.bind_group, &[]);
+        csdl_pass.dispatch_workgroups(self.partitions, 1, 1);
     }
 
-
-    {
-        let mut dev_scan_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-            label: Some("Device Scan Pass"),
+    fn set_csdldf_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut csdldf_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("CSDLDF Pass"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set: &gpu.query_set,
-                beginning_of_pass_write_index: Some(2u32),
-                end_of_pass_write_index: Some(3u32) }),
+                query_set: &self.gpu_context.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
         });
-        dev_scan_pass.set_pipeline(&gpu_shaders._dev_scan.compute_pipeline);
-        dev_scan_pass.set_bind_group(0, &gpu_shaders._dev_scan.bind_group, &[]);
-        dev_scan_pass.dispatch_workgroups(1, 1, 1);
+        csdldf_pass.set_pipeline(&self.gpu_shaders.csdldf.compute_pipeline);
+        csdldf_pass.set_bind_group(0, &self.gpu_shaders.csdldf.bind_group, &[]);
+        csdldf_pass.dispatch_workgroups(self.partitions, 1, 1);
     }
 
-    {
-        let mut downsweep_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-            label: Some("Downsweep Pass"),
+    fn set_memcpy_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut memcpy_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("Memcpy Pass"),
             timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set: &gpu.query_set,
-                beginning_of_pass_write_index: Some(4u32),
-                end_of_pass_write_index: Some(5u32) }),
+                query_set: &self.gpu_context.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
         });
-        downsweep_pass.set_pipeline(&gpu_shaders._downsweep.compute_pipeline);
-        downsweep_pass.set_bind_group(0, &gpu_shaders._downsweep.bind_group, &[]);
-        downsweep_pass.dispatch_workgroups(thread_blocks, 1, 1);
+        memcpy_pass.set_pipeline(&self.gpu_shaders.memcpy.compute_pipeline);
+        memcpy_pass.set_bind_group(0, &self.gpu_shaders.memcpy.bind_group, &[]);
+        memcpy_pass.dispatch_workgroups(self.size / PART_SIZE, 1, 1);
     }
-}
 
-fn _set_csdl_pass(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
-    let mut csdl_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-        label: Some("CSDL Pass"),
-        timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-            query_set: &gpu.query_set,
-            beginning_of_pass_write_index: Some(0u32),
-            end_of_pass_write_index: Some(1u32) }),
-    });
-    csdl_pass.set_pipeline(&gpu_shaders._csdl.compute_pipeline);
-    csdl_pass.set_bind_group(0, &gpu_shaders._csdl.bind_group, &[]);
-    csdl_pass.dispatch_workgroups(thread_blocks, 1, 1);
-}
-
-fn _set_csdldf_pass(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_shaders: &Shaders, thread_blocks: u32){
-    let mut csdldf_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-        label: Some("CSDLDF Pass"),
-        timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-            query_set: &gpu.query_set,
-            beginning_of_pass_write_index: Some(0u32),
-            end_of_pass_write_index: Some(1u32) }),
-    });
-    csdldf_pass.set_pipeline(&gpu_shaders._csdldf.compute_pipeline);
-    csdldf_pass.set_bind_group(0, &gpu_shaders._csdldf.bind_group, &[]);
-    csdldf_pass.dispatch_workgroups(thread_blocks, 1, 1);
-}
-
-fn resolve_time_query(com_encoder: &mut wgpu::CommandEncoder, gpu: &GPUContext, gpu_buffers: &GPUBuffers, pass_count: u32){
-    let entries_to_resolve = pass_count * 2;
-    com_encoder.resolve_query_set(&gpu.query_set, 0..entries_to_resolve, &gpu_buffers.timestamp, 0u64);
-    com_encoder.copy_buffer_to_buffer(
-            &gpu_buffers.timestamp, 
+    fn resolve_time_query(&self, com_encoder: &mut wgpu::CommandEncoder, pass_count: u32){
+        let entries_to_resolve = pass_count * 2;
+        com_encoder.resolve_query_set(
+            &self.gpu_context.query_set,
+            0..entries_to_resolve,
+            &self.gpu_buffers.timestamp,
+            0u64);
+        com_encoder.copy_buffer_to_buffer(
+            &self.gpu_buffers.timestamp, 
             0u64, 
-            &gpu_buffers.readback_timestamp, 
+            &self.gpu_buffers.readback_timestamp, 
             0u64,
             entries_to_resolve as u64 * std::mem::size_of::<u64>() as wgpu::BufferAddress);
-}
-
-async fn time(gpu: &GPUContext, gpu_buffers: &GPUBuffers, pass_count: usize) -> u64 {
-    let query_slice = gpu_buffers.readback_timestamp.slice(..);
-    query_slice.map_async(wgpu::MapMode::Read, |result| {
-        result.unwrap();
-    });
-    gpu.device.poll(wgpu::Maintain::wait());
-    let query_out = query_slice.get_mapped_range();
-    let timestamp: Vec<u64> = bytemuck::cast_slice(&query_out).to_vec();
-    let mut total_time = 0u64;
-    for i in 0..pass_count{
-        total_time += u64::wrapping_sub(timestamp[i * 2 + 1], timestamp[i * 2]);
     }
-    return total_time;
-}
 
-async fn validate(gpu: &GPUContext, gpu_buffers: &GPUBuffers, gpu_shaders: &Shaders) -> bool {
-    let mut valid_command =  gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
-        label: Some("Valid Command Encoder"),
-    });
-    let zero = vec![0u8; 4 as usize];
-    gpu.queue.write_buffer(&gpu_buffers.error, 0, &zero);
-    set_validate_pass(&mut valid_command, &gpu_shaders);
-    valid_command.copy_buffer_to_buffer(
-        &gpu_buffers.error,
-        0u64,
-        &gpu_buffers.readback,
-        0u64,
-        std::mem::size_of::<u32>() as wgpu::BufferAddress);
-    gpu.queue.submit(Some(valid_command.finish()));
-    let readback_slice = gpu_buffers.readback.slice(0..4);
-    readback_slice.map_async(wgpu::MapMode::Read, |result|{
-        result.unwrap();
-    });
-    gpu.device.poll(wgpu::Maintain::wait());
-    let data = readback_slice.get_mapped_range();
-    let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
-    if data_out[0] != 0 {
-        println!("Err count {}", data_out[0]);
-    }
-    return data_out[0] == 0;
-}
-
-async fn readback_results(gpu: &GPUContext, gpu_buffers: &GPUBuffers, readback_size : u32){
-    let mut copy_command =  gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
-        label: Some("Copy Command Encoder"),
-    });
-    
-    copy_command.copy_buffer_to_buffer(
-        &gpu_buffers.scan,
-        0u64,
-        &gpu_buffers.readback,
-        0u64,
-        readback_size as u64 * std::mem::size_of::<u32>() as wgpu::BufferAddress);
-    gpu.queue.submit(Some(copy_command.finish()));
-    let readback_slice = gpu_buffers.readback.slice(0..((readback_size as usize * std::mem::size_of::<u32>()) as u64));
-    readback_slice.map_async(wgpu::MapMode::Read, |result|{
-        result.unwrap();
-    });
-    gpu.device.poll(wgpu::Maintain::wait());
-    let data = readback_slice.get_mapped_range();
-    let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
-    println!("{:?}", data_out);
-    // for i in 0..readback_size{
-    //     println!("{} {}", i, data_out[i as usize]);
-    // }
-}
-
-pub async fn run(should_readback : bool, should_time : bool, readback_size : u32, size : u32, batch_size : u32){
-    let gpu_context = GPUContext::init().await;
-    let gpu_buffers = GPUBuffers::init(&gpu_context, size as usize);
-    let gpu_shaders = Shaders::init(&gpu_context, &gpu_buffers);
-    
-    let mut tests_passed: u32 = 0;
-    let mut total_time: u64 = 0;
-    for i in 0 .. batch_size{
-        let mut command = gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
-            label: Some("Command Encoder"),
+    async fn time(&self, pass_count: usize) -> u64 {
+        let query_slice = self.gpu_buffers.readback_timestamp.slice(..);
+        query_slice.map_async(wgpu::MapMode::Read, |result| {
+            result.unwrap();
         });
-    
-        init_buffers(&mut command, &gpu_shaders);
-        //set_rts_passes(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
-        //_set_csdl_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
-        _set_csdldf_pass(&mut command, &gpu_context, &gpu_shaders, div_round_up(size, PART_SIZE));
-        if should_time {
-            resolve_time_query(&mut command, &gpu_context, &gpu_buffers, 1u32)
+        self.gpu_context.device.poll(wgpu::Maintain::wait());
+        let query_out = query_slice.get_mapped_range();
+        let timestamp: Vec<u64> = bytemuck::cast_slice(&query_out).to_vec();
+        let mut total_time = 0u64;
+        for i in 0..pass_count{
+            total_time += u64::wrapping_sub(timestamp[i * 2 + 1], timestamp[i * 2]);
         }
-        gpu_context.queue.submit(Some(command.finish()));
+        return total_time;
+    }
+
+    async fn validate(&self) -> bool {
+        let mut valid_command =  self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+            label: Some("Valid Command Encoder"),
+        });
+        let zero = vec![0u8; 4 as usize];
+        self.gpu_context.queue.write_buffer(&self.gpu_buffers.error, 0, &zero);
+        self.set_validate_pass(&mut valid_command);
+        valid_command.copy_buffer_to_buffer(
+            &self.gpu_buffers.error,
+            0u64,
+            &self.gpu_buffers.readback,
+            0u64,
+            std::mem::size_of::<u32>() as wgpu::BufferAddress);
+        self.gpu_context.queue.submit(Some(valid_command.finish()));
+        let readback_slice = self.gpu_buffers.readback.slice(0..4);
+        readback_slice.map_async(wgpu::MapMode::Read, |result|{
+            result.unwrap();
+        });
+        self.gpu_context.device.poll(wgpu::Maintain::wait());
+        let data = readback_slice.get_mapped_range();
+        let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+        if data_out[0] != 0 {
+            println!("Err count {}", data_out[0]);
+        }
+        return data_out[0] == 0;
+    }
+
+    async fn readback_results(&self, readback_size : u32){
+        let mut copy_command =  self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+            label: Some("Copy Command Encoder"),
+        });
+        copy_command.copy_buffer_to_buffer(
+            &self.gpu_buffers.scan,
+            0u64,
+            &self.gpu_buffers.readback,
+            0u64,
+            readback_size as u64 * std::mem::size_of::<u32>() as wgpu::BufferAddress);
+        self.gpu_context.queue.submit(Some(copy_command.finish()));
+        let readback_slice = self.gpu_buffers.readback.slice(0..((readback_size as usize * std::mem::size_of::<u32>()) as u64));
+        readback_slice.map_async(wgpu::MapMode::Read, |result|{
+            result.unwrap();
+        });
+        self.gpu_context.device.poll(wgpu::Maintain::wait());
+        let data = readback_slice.get_mapped_range();
+        let data_out: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+        println!("{:?}", data_out);
+        // for i in 0..readback_size{
+        //     println!("{} {}", i, data_out[i as usize]);
+        // }
+    }
+
+    async fn run(
+        &self,
+        should_readback : bool,
+        should_time : bool,
+        should_validate : bool,
+        readback_size : u32,
+        batch_size : u32,
+        passes : u32,
+        set_main_pass: impl Fn(&Tester, &mut wgpu::CommandEncoder))
+    {
+        let mut tests_passed: u32 = 0;
+        let mut total_time: u64 = 0;
+        for i in 0 .. batch_size{
+            let mut command = self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+                label: Some("Command Encoder"),
+            });
         
-        if should_time {
-            total_time += time(&gpu_context, &gpu_buffers, 1usize).await;
-            gpu_buffers.readback_timestamp.unmap();
+            self.set_init_pass(&mut command);
+            set_main_pass(self, &mut command);
+            if should_time {
+                self.resolve_time_query(&mut command, passes)
+            }
+            self.gpu_context.queue.submit(Some(command.finish()));
+
+            if should_time {
+                total_time += self.time(passes as usize).await;
+                self.gpu_buffers.readback_timestamp.unmap();
+            }
+
+            if should_validate {
+                let test_passed = self.validate().await;
+                self.gpu_buffers.readback.unmap();
+                if test_passed{
+                    tests_passed += 1u32;
+                }
+            }
+        
+            if should_readback {
+                self.readback_results(readback_size).await;
+                self.gpu_buffers.readback.unmap();
+            }
+
+            if (i & 15) == 0 {
+                print!(".");
+            }
         }
 
-        let test_passed = validate(&gpu_context, &gpu_buffers, &gpu_shaders).await;
-        gpu_buffers.readback.unmap();
-        if test_passed{
-            tests_passed += 1u32;
-        }
-    
-        if should_readback {
-            readback_results(&gpu_context, &gpu_buffers, readback_size).await;
-            gpu_buffers.readback.unmap();
+        if should_time{
+            let mut f_time = total_time as f64;
+            f_time /= 1000000000.0f64;
+            println!("\nTotal time elapsed: {}", f_time);
+            let speed = ((self.size as u64) * (batch_size as u64)) as f64 / (f_time * self.gpu_context.timestamp_freq as f64);
+            println!("Estimated speed {:e} ele/s", speed);
         }
 
-        if (i & 15) == 0 {
-            print!(".");
+        if should_validate {
+            if tests_passed == batch_size{
+                println!("\nALL TESTS PASSED");
+            } else {
+                println!("TESTS FAILED: {} / {}", tests_passed, batch_size);
+            }
         }
     }
 
-    if should_time{
-        let mut f_time = total_time as f64;
-        f_time /= 1000000000.0f64;
-        println!("\nTotal time elapsed: {}", f_time);
-        let speed = ((size as u64) * (batch_size as u64)) as f64 / (f_time * gpu_context.timestamp_freq as f64);
-        println!("Estimated speed {:e} ele/s", speed);
+    fn parse(arg: &str) -> Option<ScanType> {
+        match arg {
+            "rts" => Some(ScanType::Rts),
+            "csdl" => Some(ScanType::Csdl),
+            "csdldf" => Some(ScanType::Csdldf),
+            "memcpy" => Some(ScanType::Memcpy),
+            _ => None,
+        }
     }
 
-    if tests_passed == batch_size{
-        println!("\nALL TESTS PASSED");
-    } else {
-        println!("TESTS FAILED: {} / {}", tests_passed, batch_size);
+    pub async fn run_test(
+        &self,
+        should_readback : bool,
+        should_time : bool,
+        readback_size : u32,
+        batch_size : u32,
+        args : Vec<String>)
+    {
+        let scan_type = Tester::parse(&args[1]);
+        match scan_type{
+            Some(ScanType::Rts) => self.run(should_readback, should_time, true, readback_size, batch_size, 3, Self::set_rts_passes).await,
+            Some(ScanType::Csdl) => self.run(should_readback, should_time, true, readback_size, batch_size, 1, Self::set_csdl_pass).await,
+            Some(ScanType::Csdldf) => self.run(should_readback, should_time, true, readback_size, batch_size, 1, Self::set_csdldf_pass).await,
+            Some(ScanType::Memcpy) => self.run(false, should_time, false, 0u32, batch_size, 1, Self::set_memcpy_pass).await,
+            None => println!("Err, arg not found"),
+        };
     }
+}
+
+pub async fn run_the_runner(args : Vec<String>)
+{
+    let tester = Tester::init(1 << 25).await;
+    let should_readback = false;
+    let should_time = true;
+    let readback_size = 1024;
+    let batch_size = 100;
+    tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }
 
 fn main() {
-    pollster::block_on(run(false, true, 1024, 1 << 25, 1000));
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Err, invalid number of args.");
+        return;
+    }
+    pollster::block_on(run_the_runner(args));
     println!("OK!");
 }
