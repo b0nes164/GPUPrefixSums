@@ -29,6 +29,7 @@ fn main(
     let stride = griddim.x * BLOCK_DIM;
     for(var i: u32 = id.x; i < size; i += stride){
         scan[i] = 1u;
+        //scan[i] = i + 1u;
     }
 
     for(var i: u32 = id.x; i < thread_blocks; i += stride){

@@ -117,7 +117,7 @@ fn main(
         while(s_lock == LOCKED)
         {
             workgroupBarrier();
-            
+
             if(threadid.x == 0){
                 for(var spin_count: u32 = 0; spin_count < MAX_SPIN_COUNT; ){
                     let flag_payload = atomicLoad(&reduction[lookback_id]);
@@ -150,18 +150,9 @@ fn main(
                 let dev_offset =  fallback_id * PART_SIZE;
                 var i: u32 = s_offset + dev_offset;
                 var red: u32 = 0u;
-                if(fallback_id < griddim.x - 1){
-                    for(var k: u32 = 0u; k < SPT; k += 1u){
-                        red += subgroupAdd(scan[i]);
-                        i += lane_count;
-                    }
-                }
-
-                if(fallback_id == griddim.x - 1){
-                    for(var k: u32 = 0u; k < SPT; k += 1u){
-                        red += subgroupAdd(select(0u, scan[i], i < size));
-                        i += lane_count;
-                    }
+                for(var k: u32 = 0u; k < SPT; k += 1u){
+                    red += subgroupAdd(scan[i]);
+                    i += lane_count;
                 }
                 
                 if(laneid == lane_count - 1u){
@@ -177,20 +168,18 @@ fn main(
                     }
                 }
                 workgroupBarrier();
-
+                
                 if(threadid.x == 0u){
-                    //it doesnt matter which tile inserts, or if multiple insertions attempts are performed
+                    //it doesnt matter which tile inserts, or if multiple insertion attempts are performed
                     //so long as deadlocker tile didnt begin the downsweep before the fallback reduction
                     let prev_payload = atomicLoad(&reduction[fallback_id]);
                     if(prev_payload == 0u){
                         //Max will store when no insertion has been made, but will not overwrite
                         //a tile which has updated to FLAG_INCLUSIVE
-                        let payload = s_fallback[BLOCK_DIM / lane_count - 1u] << 2u | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u);
-                        atomicMax(&reduction[fallback_id], payload); 
-                    }
-
-                    if((prev_payload & FLAG_MASK) == FLAG_NOT_READY){
-                        prev_reduction += s_fallback[BLOCK_DIM / lane_count - 1u];
+                        let f_red = s_fallback[BLOCK_DIM / lane_count - 1u];
+                        let payload = f_red << 2u | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u);
+                        atomicMax(&reduction[fallback_id], payload);
+                        prev_reduction += f_red;
                     } else {
                         prev_reduction += prev_payload >> 2u;
                     }
@@ -206,6 +195,9 @@ fn main(
             }
             workgroupBarrier();
         }
+    }
+    else{
+        workgroupBarrier();
     }
 
     let prev = select(0u, s_reduce[sid - 1u], sid != 0u) + s_broadcast;

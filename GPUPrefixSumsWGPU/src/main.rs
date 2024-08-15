@@ -9,7 +9,7 @@
 use wgpu::util::DeviceExt;
 use std::env;
 
-const PART_SIZE: u32 = 4096;    //256 * 13
+const PART_SIZE: u32 = 4096;    //256 * 16
 
 fn div_round_up(x: u32, y: u32) -> u32 {
     return (x + y - 1) / y;

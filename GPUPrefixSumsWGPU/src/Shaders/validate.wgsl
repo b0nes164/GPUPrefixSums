@@ -24,7 +24,9 @@ fn main(
     let size: u32 = info[0];
     let stride = griddim.x * BLOCK_DIM;
     for(var i: u32 = id.x; i < size; i += stride){
-        if(scan[i] != i + 1u){
+        let expected = i + 1u;
+        //let expected = (i + 1u) * (i + 2u) / 2u;
+        if(scan[i] != expected){
             atomicAdd(&error[0], 1u);
         }
     }
