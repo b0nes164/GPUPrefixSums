@@ -118,7 +118,7 @@ impl GPUBuffers{
         let reduction = gpu.device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("Reduction"),
             size: (thread_blocks as usize * std::mem::size_of::<u32>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -576,7 +576,7 @@ impl Tester{
             label: Some("Copy Command Encoder"),
         });
         copy_command.copy_buffer_to_buffer(
-            &self.gpu_buffers.scan,
+            &self.gpu_buffers.reduction,
             0u64,
             &self.gpu_buffers.readback,
             0u64,
@@ -691,10 +691,10 @@ impl Tester{
 pub async fn run_the_runner(args : Vec<String>)
 {
     let tester = Tester::init(1 << 25).await;
-    let should_readback = false;
+    let should_readback = true;
     let should_time = true;
     let readback_size = 8192;
-    let batch_size = 1000;
+    let batch_size = 1;
     tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }
 
