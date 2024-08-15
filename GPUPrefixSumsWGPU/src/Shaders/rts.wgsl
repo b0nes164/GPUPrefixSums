@@ -13,244 +13,200 @@ var<storage, read_write> scan: array<u32>;
 var<storage, read_write> reduction: array<atomic<u32>>;
 
 @group(0) @binding(2)
-var<storage, read_write> index: array<atomic<u32>>;
+var<storage, read_write> lazy_padding_0: array<atomic<u32>>;
 
 @group(0) @binding(3)
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
-const SPT: u32 = 13;
+const MIN_SUBGROUP_SIZE: u32 = 8;
+const MAX_REDUCE_SIZE: u32 = BLOCK_DIM / MIN_SUBGROUP_SIZE;
+
+const SPT: u32 = 16;
 const PART_SIZE: u32 = BLOCK_DIM * SPT;
 
-var<workgroup> s_scratch: array<u32, PART_SIZE>;
-var<workgroup> s_reduce: array<u32, BLOCK_DIM>;
+var<workgroup> s_reduce: array<u32, MAX_REDUCE_SIZE>;
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
 fn reduce(
-    @builtin(local_invocation_id) threadid: vec3<u32>,
+    @builtin(subgroup_invocation_id) laneid: u32,
+    @builtin(subgroup_id) sid: u32,
+    @builtin(subgroup_size) lane_count: u32,
     @builtin(workgroup_id) blockid: vec3<u32>,
     @builtin(num_workgroups) griddim: vec3<u32>) {
 
     //No push constant 
-    let size = info[0u];    
+    let size = info[0u];
+    let s_offset = laneid + sid * lane_count * SPT;
     let dev_offset = blockid.x * PART_SIZE;
+    var i: u32 = s_offset + dev_offset;
 
-    //Full
-    if(blockid.x < griddim.x - 1u){
-        for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-            s_scratch[i] = scan[i + dev_offset];
+    var t_red = array<u32, SPT>();
+    if(blockid.x < griddim.x - 1){
+        for(var k: u32 = 0u; k < SPT; k += 1u){
+            t_red[k] = scan[i];
+            i += lane_count;
         }
     }
 
-    //Partial
-    if(blockid.x == griddim.x - 1u){
-        let final_part_size = size - dev_offset;
-        for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
-            s_scratch[i] = scan[i + dev_offset];
+    if(blockid.x == griddim.x - 1){
+        for(var k: u32 = 0u; k < SPT; k += 1u){
+            t_red[k] = select(0u, scan[i], i < size);
+            i += lane_count;
         }
+    }
+    
+    var sub_red = 0u;
+    for(var k: u32 = 0u; k < SPT; k += 1u){
+        sub_red += subgroupAdd(t_red[k]);
+    }
+
+    if(laneid == lane_count - 1u){
+        s_reduce[sid] = sub_red;
     }
     workgroupBarrier();
 
-    var t_reduce: u32 = 0u;
-    {
-        let s_offset = threadid.x * SPT;
-        for(var i: u32 = 0u; i < SPT; i += 1u){
-            t_reduce += s_scratch[i + s_offset];
+    if(sid == 0u){
+        let pred = laneid < BLOCK_DIM / lane_count;
+        let t = subgroupAdd(select(0u, s_reduce[laneid], pred));
+        if(laneid == 0u){
+            reduction[blockid.x] = t;
         }
-    }
-    s_reduce[threadid.x] = t_reduce;
-    workgroupBarrier();
-
-    //upsweep
-    if(threadid.x < (BLOCK_DIM >> 1u)){
-        s_reduce[(threadid.x << 1u) + 1u] += s_reduce[threadid.x << 1u];
-    }
-
-    var offset: u32 = 1;
-    for(var j: u32 = (BLOCK_DIM >> 2u); j > 0u; j >>= 1u){
-        workgroupBarrier();
-        if(threadid.x < j){
-            s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u] +=
-            s_reduce[(((threadid.x << 1u) + 1u) << offset) - 1u];
-        }
-        offset += 1u;
-    }
-    workgroupBarrier();
-
-    if(threadid.x == 0u){
-        reduction[blockid.x] = s_reduce[BLOCK_DIM - 1];
     }
 }
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
 fn device_scan(
-    @builtin(local_invocation_id) threadid: vec3<u32>) {
+    @builtin(subgroup_invocation_id) laneid: u32,
+    @builtin(subgroup_id) sid: u32,
+    @builtin(subgroup_size) lane_count: u32) {
     
     //No push constant
     let size = info[1];
+    let s_offset = laneid + sid * lane_count * SPT;
     let aligned_size = (size + PART_SIZE - 1) / PART_SIZE * PART_SIZE;
     var prev_reduction: u32 = 0u;
+    var t_scan = array<u32, SPT>();
+
     for(var dev_offset: u32 = 0; dev_offset < aligned_size; dev_offset += PART_SIZE){
-        for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-            let dev_index = i + dev_offset;
-            if(dev_index < size){
-                s_scratch[i] = reduction[dev_index];
-            }
-        }
-        workgroupBarrier();
-
-        var t_scan = array<u32, SPT>();
         {
-            let s_offset = threadid.x * SPT;
-            for(var i: u32 = 0; i < SPT; i += 1u){
-                t_scan[i] = s_scratch[i + s_offset];
-                if(i != 0u){
-                    t_scan[i] += t_scan[i - 1u];
+            var i: u32 = s_offset + dev_offset;
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    t_scan[k] = reduction[i];
                 }
+                i += lane_count;
             }
-        }
-        s_reduce[threadid.x] = t_scan[SPT - 1u];
-        workgroupBarrier();
 
-        //upsweep
-        if(threadid.x < (BLOCK_DIM >> 1u)){
-            s_reduce[(threadid.x << 1u) + 1u] += s_reduce[threadid.x << 1u];
-        }
-
-        var offset: u32 = 1;
-        for(var j: u32 = (BLOCK_DIM>> 2u); j > 0u; j >>= 1u){
-            workgroupBarrier();
-            if(threadid.x < j){
-                s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u] +=
-                s_reduce[(((threadid.x << 1u) + 1u) << offset) - 1u];
+            var prev: u32 = 0u;
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
+                prev = subgroupBroadcast(t_scan[k], lane_count - 1);
             }
-            offset += 1u;
+
+            if(laneid == lane_count - 1u){
+                s_reduce[sid] = t_scan[SPT - 1u];
+            }
         }
         workgroupBarrier();
 
-        //downsweep
-        for(var j: u32 = 1u; j < BLOCK_DIM; j <<= 1u){
-            offset -= 1u;
-            workgroupBarrier();
-            if(threadid.x < j - 1){
-                s_reduce[(((threadid.x << 1u) + 3u) << offset) - 1u] +=
-                s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u];
+        if(sid == 0u){
+            let pred = laneid < BLOCK_DIM / lane_count;
+            let t = subgroupInclusiveAdd(select(0u, s_reduce[laneid], pred));
+            if(pred){
+                s_reduce[laneid] = t;
             }
         }
         workgroupBarrier();
 
         {
-            let s_offset = threadid.x * SPT;
-            for(var i: u32 = 0; i < SPT; i += 1u){
-                s_scratch[i + s_offset] = t_scan[i] + select(0u, s_reduce[threadid.x - 1], threadid.x != 0u) + prev_reduction;
-            }
-        }
-        workgroupBarrier();
-
-        for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-            let dev_index = i + dev_offset;
-            if(dev_index < size){
-                reduction[dev_index] = s_scratch[i];
+            let prev = select(0u, s_reduce[sid - 1u], sid != 0u) + prev_reduction;
+            var i: u32 = s_offset + dev_offset;
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    reduction[i] = t_scan[k] + prev;
+                }
+                i += lane_count;
             }
         }
 
-        prev_reduction += s_reduce[BLOCK_DIM - 1];
+        prev_reduction += subgroupBroadcast(s_reduce[BLOCK_DIM / lane_count - 1], 0u);
         workgroupBarrier();
     }
 }
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
 fn downsweep(
-    @builtin(local_invocation_id) threadid: vec3<u32>,
+    @builtin(subgroup_invocation_id) laneid: u32,
+    @builtin(subgroup_id) sid: u32,
+    @builtin(subgroup_size) lane_count: u32,
     @builtin(workgroup_id) blockid: vec3<u32>,
     @builtin(num_workgroups) griddim: vec3<u32>) {
-    
+
+    //No push constant 
     let size = info[0u];
-    let prev_reduction = select(0u, reduction[blockid.x - 1u], blockid.x != 0u);
-
-    //Load
-    {
-        //Full
-        let dev_offset = blockid.x * PART_SIZE;
-        if(blockid.x < griddim.x - 1u){
-            for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-                s_scratch[i] = scan[i + dev_offset];
-            }
-        }
-
-        //Partial
-        if(blockid.x == griddim.x - 1u){
-            let final_part_size = size - dev_offset;
-            for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
-                s_scratch[i] = scan[i + dev_offset];
-            }
-        }
-    }
-    workgroupBarrier();
+    let s_offset = laneid + sid * lane_count * SPT;
+    let dev_offset = blockid.x * PART_SIZE;
+    var i: u32 = s_offset + dev_offset;
 
     var t_scan = array<u32, SPT>();
     {
-        let s_offset = threadid.x * SPT;
-        for(var i: u32 = 0; i < SPT; i += 1u){
-            t_scan[i] = s_scratch[i + s_offset];
-            if(i != 0u){
-                t_scan[i] += t_scan[i - 1u];
-            }
-        }
-    }
-    s_reduce[threadid.x] = t_scan[SPT - 1u];
-    workgroupBarrier();
-
-    //upsweep
-    if(threadid.x < (BLOCK_DIM >> 1u)){
-        s_reduce[(threadid.x << 1u) + 1u] += s_reduce[threadid.x << 1u];
-    }
-
-    var offset: u32 = 1;
-    for(var j: u32 = (BLOCK_DIM>> 2u); j > 0u; j >>= 1u){
-        workgroupBarrier();
-        if(threadid.x < j){
-            s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u] +=
-             s_reduce[(((threadid.x << 1u) + 1u) << offset) - 1u];
-        }
-        offset += 1u;
-    }
-    workgroupBarrier();
-
-    //downsweep
-    for(var j: u32 = 1u; j < BLOCK_DIM; j <<= 1u){
-        offset -= 1u;
-        workgroupBarrier();
-        if(threadid.x < j - 1){
-            s_reduce[(((threadid.x << 1u) + 3u) << offset) - 1u] +=
-             s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u];
-        }
-    }
-    workgroupBarrier();
-
-    {
-        let s_offset = threadid.x * SPT;
-        for(var i: u32 = 0; i < SPT; i += 1u){
-            s_scratch[i + s_offset] = t_scan[i] + select(0u, s_reduce[threadid.x - 1], threadid.x != 0u) + prev_reduction;
-        }
-    }
-    workgroupBarrier();
-
-    //Write
-    {
-        //Full
-        let dev_offset = blockid.x * PART_SIZE;
-        if(blockid.x < griddim.x - 1u){
-            for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-                scan[i + dev_offset] = s_scratch[i];
+        if(blockid.x < griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                t_scan[k] = scan[i];
+                i += lane_count;
             }
         }
 
-        //Partial
-        if(blockid.x == griddim.x - 1u){
-            let final_part_size = size - dev_offset;
-            for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
-                scan[i + dev_offset] = s_scratch[i];
+        if(blockid.x == griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    t_scan[k] = scan[i];
+                }
+                i += lane_count;
+            }
+        }
+        
+        var prev: u32 = 0u;
+        for(var k: u32 = 0u; k < SPT; k += 1u){
+            t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
+            prev = subgroupBroadcast(t_scan[k], lane_count - 1);
+        }
+
+        if(laneid == lane_count - 1u){
+            s_reduce[sid] = t_scan[SPT - 1u];
+        }
+    }
+    workgroupBarrier();
+
+    if(sid == 0u){
+        let pred = laneid < BLOCK_DIM / lane_count;
+        let t = subgroupInclusiveAdd(select(0u, s_reduce[laneid], pred));
+        if(pred){
+            s_reduce[laneid] = t;
+        }
+    }
+    workgroupBarrier();
+
+    let prev = select(0u, s_reduce[sid - 1u], sid != 0u) + select(0u, reduction[blockid.x - 1u], blockid.x != 0u); 
+    {
+        let s_offset = laneid + sid * lane_count * SPT;
+        let dev_offset =  blockid.x * PART_SIZE;
+        var i: u32 = s_offset + dev_offset;
+
+        if(blockid.x < griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                scan[i] = t_scan[k] + prev;
+                i += lane_count;
+            }
+        }
+
+        if(blockid.x == griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    scan[i] = t_scan[k] + prev;
+                }
+                i += lane_count;
             }
         }
     }

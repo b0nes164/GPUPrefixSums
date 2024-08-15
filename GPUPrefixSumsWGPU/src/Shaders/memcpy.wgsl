@@ -19,7 +19,7 @@ var<storage, read_write> lazy_padding_1: array<u32>;
 var<storage, read> lazy_padding_2: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
-const SPT: u32 = 13;
+const SPT: u32 = 16;
 const PART_SIZE: u32 = BLOCK_DIM * SPT;
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
 fn main(

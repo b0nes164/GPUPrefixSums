@@ -9,7 +9,7 @@
 use wgpu::util::DeviceExt;
 use std::env;
 
-const PART_SIZE: u32 = 3328;    //256 * 13
+const PART_SIZE: u32 = 4096;    //256 * 13
 
 fn div_round_up(x: u32, y: u32) -> u32 {
     return (x + y - 1) / y;
@@ -51,7 +51,7 @@ impl GPUContext{
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::TIMESTAMP_QUERY,
+                    required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP,
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
@@ -693,7 +693,7 @@ pub async fn run_the_runner(args : Vec<String>)
     let tester = Tester::init(1 << 25).await;
     let should_readback = false;
     let should_time = true;
-    let readback_size = 1024;
+    let readback_size = 8192;
     let batch_size = 1000;
     tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }

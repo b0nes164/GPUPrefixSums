@@ -19,7 +19,10 @@ var<storage, read_write> index: array<atomic<u32>>;
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
-const SPT: u32 = 13;
+const MIN_SUBGROUP_SIZE: u32 = 8;
+const MAX_REDUCE_SIZE: u32 = BLOCK_DIM / MIN_SUBGROUP_SIZE;
+
+const SPT: u32 = 16;
 const PART_SIZE: u32 = BLOCK_DIM * SPT;
 
 const FLAG_NOT_READY: u32 = 0;
@@ -28,138 +31,117 @@ const FLAG_INCLUSIVE: u32 = 2;
 const FLAG_MASK: u32 = 3;
 
 var<workgroup> s_broadcast: u32;
-var<workgroup> s_scan: array<u32, PART_SIZE>;
-var<workgroup> s_reduce: array<u32, BLOCK_DIM>;
+var<workgroup> s_reduce: array<u32, MAX_REDUCE_SIZE>;
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
 fn main(
     @builtin(local_invocation_id) threadid: vec3<u32>,
+    @builtin(subgroup_invocation_id) laneid: u32,
+    @builtin(subgroup_id) sid: u32,
+    @builtin(subgroup_size) lane_count: u32,
     @builtin(num_workgroups) griddim: vec3<u32>) {
 
     //No push constant, so we use device memory instead...
     let size = info[0u];
 
-    //acquire partition index
+    //acquire partition index, set the lock
     if(threadid.x == 0u){
         s_broadcast = atomicAdd(&index[0u], 1u);
     }
     workgroupBarrier();
-    let partition_index = s_broadcast;
-
-    //Load
-    {
-        //Full
-        let dev_offset = partition_index * PART_SIZE;
-        if(partition_index < griddim.x - 1u){
-            for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-                s_scan[i] = scan[i + dev_offset];
-            }
-        }
-
-        //Partial
-        if(partition_index == griddim.x - 1u){
-            let final_part_size = size - dev_offset;
-            for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
-                s_scan[i] = scan[i + dev_offset];
-            }
-        }
-    }
-    workgroupBarrier();
+    let part_id = s_broadcast;
 
     var t_scan = array<u32, SPT>();
     {
-        let s_offset = threadid.x * SPT;
-        for(var i: u32 = 0; i < SPT; i += 1u){
-            t_scan[i] = s_scan[i + s_offset];
-            if(i != 0u){
-                t_scan[i] += t_scan[i - 1u];
+        let s_offset = laneid + sid * lane_count * SPT;
+        let dev_offset =  part_id * PART_SIZE;
+        var i: u32 = s_offset + dev_offset;
+
+        if(part_id < griddim.x - 1u){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                t_scan[k] = scan[i];
+                i += lane_count;
             }
         }
+
+        if(part_id == griddim.x - 1u){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    t_scan[k] = scan[i];
+                }
+                i += lane_count;
+            }
+        }
+
+        var prev: u32 = 0u;
+        for(var k: u32 = 0u; k < SPT; k += 1u){
+            t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
+            prev = subgroupBroadcast(t_scan[k], lane_count - 1);
+        }
+
+        if(laneid == lane_count - 1u){
+            s_reduce[sid] = t_scan[SPT - 1u];
+        }
     }
-    s_reduce[threadid.x] = t_scan[SPT - 1u];
     workgroupBarrier();
 
-    //upsweep
-    if(threadid.x < (BLOCK_DIM >> 1u)){
-        s_reduce[(threadid.x << 1u) + 1u] += s_reduce[threadid.x << 1u];
-    }
-
-    var offset: u32 = 1;
-    for(var j: u32 = (BLOCK_DIM>> 2u); j > 0u; j >>= 1u){
-        workgroupBarrier();
-        if(threadid.x < j){
-            s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u] +=
-             s_reduce[(((threadid.x << 1u) + 1u) << offset) - 1u];
+    if(sid == 0u){
+        let pred = laneid < BLOCK_DIM / lane_count;
+        let t = subgroupInclusiveAdd(select(0u, s_reduce[laneid], pred));
+        if(pred){
+            s_reduce[laneid] = t;
         }
-        offset += 1u;
     }
     workgroupBarrier();
 
     //Device broadcast
     if(threadid.x == 0u){
-        atomicStore(&reduction[partition_index], s_reduce[BLOCK_DIM - 1u] << 2u |
-         select(FLAG_INCLUSIVE, FLAG_REDUCTION, partition_index != 0));
+        atomicStore(&reduction[part_id], s_reduce[BLOCK_DIM / lane_count - 1u] << 2u |
+         select(FLAG_INCLUSIVE, FLAG_REDUCTION, part_id != 0u));
     }
 
     //Lookback, single thread
-    if(partition_index != 0u){
+    if(part_id != 0u){
         if(threadid.x == 0u){
-            var lookback_index: u32 = partition_index - 1u;
+            var lookback_id: u32 = part_id - 1u;
             var prev_reduction: u32 = 0u;
             loop{
-                let flag_payload = atomicLoad(&reduction[lookback_index]);
+                let flag_payload = atomicLoad(&reduction[lookback_id]);
                 if((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE){
                     prev_reduction += flag_payload >> 2u;
-                    atomicAdd(&reduction[partition_index], prev_reduction << 2u | 1u);
+                    atomicAdd(&reduction[part_id], prev_reduction << 2u | 1u);
                     s_broadcast = prev_reduction;
                     break;
                 }
 
                 if((flag_payload & FLAG_MASK) == FLAG_REDUCTION){
                     prev_reduction += flag_payload >> 2u;
-                    lookback_index -= 1u;
+                    lookback_id -= 1u;
                 }
             }
         }
-        //typically there would be a barrier here, but can elide due to use of blelloch scan
-    }
-
-    //downsweep
-    for(var j: u32 = 1u; j < BLOCK_DIM; j <<= 1u){
-        offset -= 1u;
         workgroupBarrier();
-        if(threadid.x < j - 1){
-            s_reduce[(((threadid.x << 1u) + 3u) << offset) - 1u] +=
-             s_reduce[(((threadid.x << 1u) + 2u) << offset) - 1u];
-        }
     }
-    workgroupBarrier();
 
+    let prev = s_broadcast + select(0u, s_reduce[sid - 1u], sid != 0u); //s_broadcast convienently 0 for part_id 0
     {
-        let s_offset = threadid.x * SPT;
-        let prev = s_broadcast + select(0u, s_reduce[threadid.x - 1u], threadid.x != 0u);
-        for(var i: u32 = 0; i < SPT; i += 1u){
-            s_scan[i + s_offset] = t_scan[i] + prev;
-        }
-    }
-    workgroupBarrier();
+        let s_offset = laneid + sid * lane_count * SPT;
+        let dev_offset =  part_id * PART_SIZE;
+        var i: u32 = s_offset + dev_offset;
 
-    //Write
-    {
-        //Full
-        let prev = s_broadcast;
-        let dev_offset = partition_index * PART_SIZE;
-        if(partition_index < griddim.x - 1u){
-            for(var i: u32 = threadid.x; i < PART_SIZE; i += BLOCK_DIM){
-                scan[i + dev_offset] = s_scan[i];
+        if(part_id < griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                scan[i] = t_scan[k] + prev;
+                i += lane_count;
             }
         }
 
-        //Partial
-        if(partition_index == griddim.x - 1u){
-            let final_part_size = size - dev_offset;
-            for(var i: u32 = threadid.x; i < final_part_size; i += BLOCK_DIM){
-                scan[i + dev_offset] = s_scan[i];
+        if(part_id == griddim.x - 1){
+            for(var k: u32 = 0u; k < SPT; k += 1u){
+                if(i < size){
+                    scan[i] = t_scan[k] + prev;
+                }
+                i += lane_count;
             }
         }
     }
