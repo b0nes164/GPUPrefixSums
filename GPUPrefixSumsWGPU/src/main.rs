@@ -363,9 +363,9 @@ impl Shaders{
         unsafe{
             rts_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/rts.wgsl"));
             csdl_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
-            csdldf_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
             memcpy_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
         }
+        csdldf_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
         let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
