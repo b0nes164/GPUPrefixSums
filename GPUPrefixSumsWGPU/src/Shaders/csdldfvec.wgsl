@@ -33,7 +33,7 @@ const FLAG_REDUCTION: u32 = 1;
 const FLAG_INCLUSIVE: u32 = 2;
 const FLAG_MASK: u32 = 3;
 
-const MAX_SPIN_COUNT: u32 = 4;
+const MAX_SPIN_COUNT: u32 = 16;
 const LOCKED: u32 = 1;
 const UNLOCKED: u32 = 0;
 

@@ -114,7 +114,6 @@ fn main(
             i += lane_count;
 
             t_scan[15] = scan_in[i];
-            i += lane_count;
         }
 
         if(part_id == griddim.x - 1u){
@@ -196,7 +195,6 @@ fn main(
             if (i < size) {
                 t_scan[15] = scan_in[i];
             }
-            i += lane_count;
         }
 
         var prev: u32 = 0u;
