@@ -94,11 +94,83 @@ fn device_scan(
     for(var dev_offset: u32 = 0; dev_offset < aligned_size; dev_offset += PART_SIZE){
         {
             var i: u32 = s_offset + dev_offset;
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                if(i < size){
-                    t_scan[k] = reduction[i];
-                }
-                i += lane_count;
+            if (i < size) {
+                t_scan[0] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[1] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[2] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[3] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[4] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[5] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[6] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[7] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[8] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[9] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[10] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[11] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[12] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[13] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[14] = reduction[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[15] = reduction[i];
             }
 
             var prev: u32 = 0u;
@@ -125,11 +197,83 @@ fn device_scan(
         {
             let prev = select(0u, s_reduce[sid - 1u], sid != 0u) + prev_reduction;
             var i: u32 = s_offset + dev_offset;
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                if(i < size){
-                    reduction[i] = t_scan[k] + prev;
-                }
-                i += lane_count;
+            if (i < size) {
+                reduction[i] = t_scan[0] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[1] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[2] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[3] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[4] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[5] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[6] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[7] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[8] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[9] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[10] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[11] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[12] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[13] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[14] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                reduction[i] = t_scan[15] + prev;
             }
         }
 

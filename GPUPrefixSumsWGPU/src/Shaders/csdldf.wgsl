@@ -494,7 +494,6 @@ fn main(
             if (i < size) {
                 scan_out[i] = t_scan[15] + prev;
             }
-            i += lane_count;
         }
     }
 }

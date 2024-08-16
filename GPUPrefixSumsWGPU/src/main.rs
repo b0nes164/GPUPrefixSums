@@ -17,8 +17,10 @@ fn div_round_up(x: u32, y: u32) -> u32 {
 
 enum ScanType{
     Rts,
+    Rtsvec,
     Csdl,
     Csdldf,
+    Csdldfvec,
     Memcpy,
 }
 
@@ -367,10 +369,13 @@ impl  ComputeShader{
 struct Shaders{
     init: ComputeShader,
     reduce: ComputeShader,
+    reducevec: ComputeShader,
     dev_scan: ComputeShader,
     downsweep: ComputeShader,
+    downsweepvec: ComputeShader,
     csdl: ComputeShader,
     csdldf: ComputeShader,
+    csdldfvec: ComputeShader,
     memcpy: ComputeShader,
     validate: ComputeShader,
 }
@@ -380,33 +385,43 @@ impl Shaders{
         
         let init_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/init.wgsl"));
         let rts_module: wgpu::ShaderModule;
+        let rtsvec_module: wgpu::ShaderModule;
         let csdl_module: wgpu::ShaderModule;
         let csdldf_module: wgpu::ShaderModule;
+        let csdldfvec_module: wgpu::ShaderModule;
         let memcpy_module: wgpu::ShaderModule;
         unsafe{
             rts_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/rts.wgsl"));
+            rtsvec_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/rtsvec.wgsl"));
             csdl_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
             csdldf_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
+            csdldfvec_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdldfvec.wgsl"));
             memcpy_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
         }
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
         let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
         let reduce = ComputeShader::init_main("reduce", gpu, gpu_buffers, &rts_module);
+        let reducevec = ComputeShader::init_main("reduce", gpu, gpu_buffers, &rtsvec_module);
         let dev_scan = ComputeShader::init_main("device_scan", gpu, gpu_buffers, &rts_module);
         let downsweep = ComputeShader::init_main("downsweep", gpu, gpu_buffers, &rts_module);
+        let downsweepvec = ComputeShader::init_main("downsweep", gpu, gpu_buffers, &rtsvec_module);
         let csdl = ComputeShader::init_main("main", gpu, gpu_buffers, &csdl_module);
         let csdldf = ComputeShader::init_main("main", gpu, gpu_buffers, &csdldf_module);
+        let csdldfvec = ComputeShader::init_main("main", gpu, gpu_buffers, &csdldfvec_module);
         let memcpy = ComputeShader::init_main("main", gpu, gpu_buffers, &memcpy_module);
         let validate = ComputeShader::init_valid(gpu, gpu_buffers, &valid_module);
 
         Shaders{
             init,
             reduce,
+            reducevec,
             dev_scan,
             downsweep,
+            downsweepvec,
             csdl,
             csdldf,
+            csdldfvec,
             memcpy,
             validate,
         }
@@ -497,6 +512,47 @@ impl Tester{
         }
     }
 
+    fn set_rtsvec_passes(&self, com_encoder: &mut wgpu::CommandEncoder){
+        {
+            let mut redvec_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("ReduceVec Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(0u32),
+                    end_of_pass_write_index: Some(1u32) }),
+            });
+            redvec_pass.set_pipeline(&self.gpu_shaders.reducevec.compute_pipeline);
+            redvec_pass.set_bind_group(0, &self.gpu_shaders.reducevec.bind_group, &[]);
+            redvec_pass.dispatch_workgroups(self.partitions, 1, 1);
+        }
+    
+        {
+            let mut dev_scan_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("Device Scan Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(2u32),
+                    end_of_pass_write_index: Some(3u32) }),
+            });
+            dev_scan_pass.set_pipeline(&self.gpu_shaders.dev_scan.compute_pipeline);
+            dev_scan_pass.set_bind_group(0, &self.gpu_shaders.dev_scan.bind_group, &[]);
+            dev_scan_pass.dispatch_workgroups(1, 1, 1);
+        }
+    
+        {
+            let mut downsweepvec_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+                label: Some("DownsweepVec Pass"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.gpu_context.query_set,
+                    beginning_of_pass_write_index: Some(4u32),
+                    end_of_pass_write_index: Some(5u32) }),
+            });
+            downsweepvec_pass.set_pipeline(&self.gpu_shaders.downsweepvec.compute_pipeline);
+            downsweepvec_pass.set_bind_group(0, &self.gpu_shaders.downsweepvec.bind_group, &[]);
+            downsweepvec_pass.dispatch_workgroups(self.partitions, 1, 1);
+        }
+    }
+
     fn set_csdl_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
         let mut csdl_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
             label: Some("CSDL Pass"),
@@ -521,6 +577,19 @@ impl Tester{
         csdldf_pass.set_pipeline(&self.gpu_shaders.csdldf.compute_pipeline);
         csdldf_pass.set_bind_group(0, &self.gpu_shaders.csdldf.bind_group, &[]);
         csdldf_pass.dispatch_workgroups(self.partitions, 1, 1);
+    }
+
+    fn set_csdldfvec_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
+        let mut csdldfvec_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
+            label: Some("CSDLDFVEC Pass"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &self.gpu_context.query_set,
+                beginning_of_pass_write_index: Some(0u32),
+                end_of_pass_write_index: Some(1u32) }),
+        });
+        csdldfvec_pass.set_pipeline(&self.gpu_shaders.csdldfvec.compute_pipeline);
+        csdldfvec_pass.set_bind_group(0, &self.gpu_shaders.csdldfvec.bind_group, &[]);
+        csdldfvec_pass.dispatch_workgroups(self.partitions, 1, 1);
     }
 
     fn set_memcpy_pass(&self, com_encoder: &mut wgpu::CommandEncoder){
@@ -684,8 +753,10 @@ impl Tester{
     fn parse(arg: &str) -> Option<ScanType> {
         match arg {
             "rts" => Some(ScanType::Rts),
+            "rtsvec" => Some(ScanType::Rtsvec),
             "csdl" => Some(ScanType::Csdl),
             "csdldf" => Some(ScanType::Csdldf),
+            "csdldfvec" =>Some(ScanType::Csdldfvec),
             "memcpy" => Some(ScanType::Memcpy),
             _ => None,
         }
@@ -702,8 +773,10 @@ impl Tester{
         let scan_type = Tester::parse(&args[1]);
         match scan_type{
             Some(ScanType::Rts) => self.run(should_readback, should_time, true, readback_size, batch_size, 3, Self::set_rts_passes).await,
+            Some(ScanType::Rtsvec) => self.run(should_readback, should_time, true, readback_size, batch_size, 3, Self::set_rtsvec_passes).await,
             Some(ScanType::Csdl) => self.run(should_readback, should_time, true, readback_size, batch_size, 1, Self::set_csdl_pass).await,
             Some(ScanType::Csdldf) => self.run(should_readback, should_time, true, readback_size, batch_size, 1, Self::set_csdldf_pass).await,
+            Some(ScanType::Csdldfvec) => self.run(should_readback, should_time, true, readback_size, batch_size, 1, Self::set_csdldfvec_pass).await,
             Some(ScanType::Memcpy) => self.run(false, should_time, false, 0u32, batch_size, 1, Self::set_memcpy_pass).await,
             None => println!("Err, arg not found"),
         };
@@ -716,7 +789,7 @@ pub async fn run_the_runner(args : Vec<String>)
     let should_readback = false;
     let should_time = true;
     let readback_size = 8192;
-    let batch_size = 100;
+    let batch_size = 1000;
     tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }
 
