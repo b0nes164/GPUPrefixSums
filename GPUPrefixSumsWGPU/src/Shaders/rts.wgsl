@@ -7,15 +7,18 @@
 //
 //****************************************************************************
 @group(0) @binding(0)
-var<storage, read_write> scan: array<u32>;
+var<storage, read_write> scan_in: array<u32>;
 
 @group(0) @binding(1)
-var<storage, read_write> reduction: array<atomic<u32>>;
+var<storage, read_write> scan_out: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> lazy_padding_0: array<atomic<u32>>;
+var<storage, read_write> reduction: array<u32>;
 
 @group(0) @binding(3)
+var<storage, read_write> lazy_padding_0: array<u32>;
+
+@group(0) @binding(4)
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
@@ -44,14 +47,14 @@ fn reduce(
     var t_red = array<u32, SPT>();
     if(blockid.x < griddim.x - 1){
         for(var k: u32 = 0u; k < SPT; k += 1u){
-            t_red[k] = scan[i];
+            t_red[k] = scan_in[i];
             i += lane_count;
         }
     }
 
     if(blockid.x == griddim.x - 1){
         for(var k: u32 = 0u; k < SPT; k += 1u){
-            t_red[k] = select(0u, scan[i], i < size);
+            t_red[k] = select(0u, scan_in[i], i < size);
             i += lane_count;
         }
     }
@@ -153,7 +156,7 @@ fn downsweep(
     {
         if(blockid.x < griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
-                t_scan[k] = scan[i];
+                t_scan[k] = scan_in[i];
                 i += lane_count;
             }
         }
@@ -161,7 +164,7 @@ fn downsweep(
         if(blockid.x == griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
                 if(i < size){
-                    t_scan[k] = scan[i];
+                    t_scan[k] = scan_in[i];
                 }
                 i += lane_count;
             }
@@ -196,7 +199,7 @@ fn downsweep(
 
         if(blockid.x < griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
-                scan[i] = t_scan[k] + prev;
+                scan_out[i] = t_scan[k] + prev;
                 i += lane_count;
             }
         }
@@ -204,7 +207,7 @@ fn downsweep(
         if(blockid.x == griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
                 if(i < size){
-                    scan[i] = t_scan[k] + prev;
+                    scan_out[i] = t_scan[k] + prev;
                 }
                 i += lane_count;
             }

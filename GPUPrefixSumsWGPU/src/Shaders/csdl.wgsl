@@ -7,15 +7,18 @@
 //
 //****************************************************************************
 @group(0) @binding(0)
-var<storage, read_write> scan: array<u32>;
+var<storage, read_write> scan_in: array<u32>;
 
 @group(0) @binding(1)
-var<storage, read_write> reduction: array<atomic<u32>>;
+var<storage, read_write> scan_out: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> index: array<atomic<u32>>;
+var<storage, read_write> reduction: array<atomic<u32>>;
 
 @group(0) @binding(3)
+var<storage, read_write> index: array<atomic<u32>>;
+
+@group(0) @binding(4)
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
@@ -59,7 +62,7 @@ fn main(
 
         if(part_id < griddim.x - 1u){
             for(var k: u32 = 0u; k < SPT; k += 1u){
-                t_scan[k] = scan[i];
+                t_scan[k] = scan_in[i];
                 i += lane_count;
             }
         }
@@ -67,7 +70,7 @@ fn main(
         if(part_id == griddim.x - 1u){
             for(var k: u32 = 0u; k < SPT; k += 1u){
                 if(i < size){
-                    t_scan[k] = scan[i];
+                    t_scan[k] = scan_in[i];
                 }
                 i += lane_count;
             }
@@ -131,7 +134,7 @@ fn main(
 
         if(part_id < griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
-                scan[i] = t_scan[k] + prev;
+                scan_out[i] = t_scan[k] + prev;
                 i += lane_count;
             }
         }
@@ -139,7 +142,7 @@ fn main(
         if(part_id == griddim.x - 1){
             for(var k: u32 = 0u; k < SPT; k += 1u){
                 if(i < size){
-                    scan[i] = t_scan[k] + prev;
+                    scan_out[i] = t_scan[k] + prev;
                 }
                 i += lane_count;
             }

@@ -7,7 +7,7 @@
 //
 //****************************************************************************
 @group(0) @binding(0)
-var<storage, read_write> scan: array<u32>;
+var<storage, read_write> scan_out: array<u32>;
 
 @group(0) @binding(1)
 var<storage, read> info: array<u32>;
@@ -26,7 +26,7 @@ fn main(
     for(var i: u32 = id.x; i < size; i += stride){
         let expected = i + 1u;
         //let expected = (i + 1u) * (i + 2u) / 2u;
-        if(scan[i] != expected){
+        if(scan_out[i] != expected){
             atomicAdd(&error[0], 1u);
         }
     }

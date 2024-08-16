@@ -80,7 +80,8 @@ impl GPUContext{
 struct GPUBuffers{
     info: wgpu::Buffer,
     readback: wgpu::Buffer,
-    scan: wgpu::Buffer,
+    scan_in: wgpu::Buffer,
+    scan_out: wgpu::Buffer,
     reduction: wgpu::Buffer,
     index: wgpu::Buffer,
     timestamp: wgpu::Buffer,
@@ -108,8 +109,15 @@ impl GPUBuffers{
             mapped_at_creation: false,
         });
 
-        let scan = gpu.device.create_buffer(&wgpu::BufferDescriptor{
-            label: Some("Scan"),
+        let scan_in = gpu.device.create_buffer(&wgpu::BufferDescriptor{
+            label: Some("Scan In"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let scan_out = gpu.device.create_buffer(&wgpu::BufferDescriptor{
+            label: Some("Scan Out"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
@@ -154,7 +162,8 @@ impl GPUBuffers{
         GPUBuffers{
             info,
             readback,
-            scan,
+            scan_in,
+            scan_out,
             reduction,
             index,
             timestamp,
@@ -210,6 +219,16 @@ impl  ComputeShader{
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -225,18 +244,22 @@ impl  ComputeShader{
             entries: &[
                 wgpu::BindGroupEntry{
                     binding: 0,
-                    resource: gpu_buffers.scan.as_entire_binding(),
+                    resource: gpu_buffers.scan_in.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry{
                     binding: 1,
-                    resource: gpu_buffers.reduction.as_entire_binding(),
+                    resource: gpu_buffers.scan_out.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry{
                     binding: 2,
-                    resource: gpu_buffers.index.as_entire_binding(),
+                    resource: gpu_buffers.reduction.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry{
                     binding: 3,
+                    resource: gpu_buffers.index.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry{
+                    binding: 4,
                     resource: gpu_buffers.info.as_entire_binding(),
                 },
             ],
@@ -306,7 +329,7 @@ impl  ComputeShader{
             entries: &[
                 wgpu::BindGroupEntry{
                     binding: 0,
-                    resource: gpu_buffers.scan.as_entire_binding(),
+                    resource: gpu_buffers.scan_out.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry{
                     binding: 1,
@@ -363,9 +386,9 @@ impl Shaders{
         unsafe{
             rts_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/rts.wgsl"));
             csdl_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdl.wgsl"));
+            csdldf_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
             memcpy_module = gpu.device.create_shader_module_unchecked(wgpu::include_wgsl!("Shaders/memcpy.wgsl"));
         }
-        csdldf_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/csdldf.wgsl"));
         let valid_module = gpu.device.create_shader_module(wgpu::include_wgsl!("Shaders/validate.wgsl"));
 
         let init = ComputeShader::init_main("main", gpu, gpu_buffers, &init_module);
@@ -446,7 +469,6 @@ impl Tester{
             red_pass.set_bind_group(0, &self.gpu_shaders.reduce.bind_group, &[]);
             red_pass.dispatch_workgroups(self.partitions, 1, 1);
         }
-    
     
         {
             let mut dev_scan_pass = com_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
@@ -576,7 +598,7 @@ impl Tester{
             label: Some("Copy Command Encoder"),
         });
         copy_command.copy_buffer_to_buffer(
-            &self.gpu_buffers.reduction,
+            &self.gpu_buffers.scan_out,
             0u64,
             &self.gpu_buffers.readback,
             0u64,
@@ -691,10 +713,10 @@ impl Tester{
 pub async fn run_the_runner(args : Vec<String>)
 {
     let tester = Tester::init(1 << 25).await;
-    let should_readback = true;
+    let should_readback = false;
     let should_time = true;
     let readback_size = 8192;
-    let batch_size = 1;
+    let batch_size = 100;
     tester.run_test(should_readback, should_time, readback_size, batch_size, args).await;
 }
 

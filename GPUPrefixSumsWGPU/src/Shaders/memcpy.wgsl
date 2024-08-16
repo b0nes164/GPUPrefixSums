@@ -16,7 +16,10 @@ var<storage, read_write> lazy_padding_0: array<u32>;
 var<storage, read_write> lazy_padding_1: array<u32>;
 
 @group(0) @binding(3)
-var<storage, read> lazy_padding_2: array<u32>;
+var<storage, read_write> lazy_padding_2: array<u32>;
+
+@group(0) @binding(4)
+var<storage, read> lazy_padding_3: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
 const SPT: u32 = 16;

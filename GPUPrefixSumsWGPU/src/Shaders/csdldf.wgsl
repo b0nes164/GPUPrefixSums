@@ -7,15 +7,18 @@
 //
 //****************************************************************************
 @group(0) @binding(0)
-var<storage, read_write> scan: array<u32>;
+var<storage, read_write> scan_in: array<u32>;
 
 @group(0) @binding(1)
-var<storage, read_write> reduction: array<atomic<u32>>;
+var<storage, read_write> scan_out: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> index: array<atomic<u32>>;
+var<storage, read_write> reduction: array<atomic<u32>>;
 
 @group(0) @binding(3)
+var<storage, read_write> index: array<atomic<u32>>;
+
+@group(0) @binding(4)
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
@@ -65,19 +68,135 @@ fn main(
         var i: u32 = s_offset + dev_offset;
 
         if(part_id < griddim.x - 1u){
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                t_scan[k] = scan[i];
-                i += lane_count;
-            }
+            t_scan[0] = scan_in[i];
+            i += lane_count;
+
+            t_scan[1] = scan_in[i];
+            i += lane_count;
+
+            t_scan[2] = scan_in[i];
+            i += lane_count;
+
+            t_scan[3] = scan_in[i];
+            i += lane_count;
+
+            t_scan[4] = scan_in[i];
+            i += lane_count;
+
+            t_scan[5] = scan_in[i];
+            i += lane_count;
+
+            t_scan[6] = scan_in[i];
+            i += lane_count;
+
+            t_scan[7] = scan_in[i];
+            i += lane_count;
+
+            t_scan[8] = scan_in[i];
+            i += lane_count;
+
+            t_scan[9] = scan_in[i];
+            i += lane_count;
+
+            t_scan[10] = scan_in[i];
+            i += lane_count;
+
+            t_scan[11] = scan_in[i];
+            i += lane_count;
+
+            t_scan[12] = scan_in[i];
+            i += lane_count;
+
+            t_scan[13] = scan_in[i];
+            i += lane_count;
+
+            t_scan[14] = scan_in[i];
+            i += lane_count;
+
+            t_scan[15] = scan_in[i];
+            i += lane_count;
         }
 
         if(part_id == griddim.x - 1u){
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                if(i < size){
-                    t_scan[k] = scan[i];
-                }
-                i += lane_count;
+            if (i < size) {
+                t_scan[0] = scan_in[i];
             }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[1] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[2] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[3] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[4] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[5] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[6] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[7] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[8] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[9] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[10] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[11] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[12] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[13] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[14] = scan_in[i];
+            }
+            i += lane_count;
+
+            if (i < size) {
+                t_scan[15] = scan_in[i];
+            }
+            i += lane_count;
         }
 
         var prev: u32 = 0u;
@@ -150,10 +269,54 @@ fn main(
                 let dev_offset =  fallback_id * PART_SIZE;
                 var i: u32 = s_offset + dev_offset;
                 var red: u32 = 0u;
-                for(var k: u32 = 0u; k < SPT; k += 1u){
-                    red += subgroupAdd(scan[i]);
-                    i += lane_count;
-                }
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
+
+                red += subgroupAdd(scan_in[i]);
+                i += lane_count;
                 
                 if(laneid == lane_count - 1u){
                     s_fallback[sid] = red;
@@ -170,8 +333,7 @@ fn main(
                 workgroupBarrier();
                 
                 if(threadid.x == 0u){
-                    //it doesnt matter which tile inserts, or if multiple insertion attempts are performed
-                    //so long as deadlocker tile didnt begin the downsweep before the fallback reduction
+                    //Check if another tile inserted before attempting our own insertion
                     let prev_payload = atomicLoad(&reduction[fallback_id]);
                     if(prev_payload == 0u){
                         //Max will store when no insertion has been made, but will not overwrite
@@ -192,12 +354,9 @@ fn main(
                         lookback_id -= 1u;
                     }
                 }
+                workgroupBarrier();
             }
-            workgroupBarrier();
         }
-    }
-    else{
-        workgroupBarrier();
     }
 
     let prev = select(0u, s_reduce[sid - 1u], sid != 0u) + s_broadcast;
@@ -207,19 +366,135 @@ fn main(
         var i: u32 = s_offset + dev_offset;
 
         if(part_id < griddim.x - 1){
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                scan[i] = t_scan[k] + prev;
-                i += lane_count;
-            }
+            scan_out[i] = t_scan[0] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[1] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[2] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[3] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[4] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[5] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[6] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[7] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[8] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[9] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[10] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[11] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[12] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[13] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[14] + prev;
+            i += lane_count;
+
+            scan_out[i] = t_scan[15] + prev;
+            i += lane_count;
         }
 
         if(part_id == griddim.x - 1){
-            for(var k: u32 = 0u; k < SPT; k += 1u){
-                if(i < size){
-                    scan[i] = t_scan[k] + prev;
-                }
-                i += lane_count;
+            if (i < size) {
+                scan_out[i] = t_scan[0] + prev;
             }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[1] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[2] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[3] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[4] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[5] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[6] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[7] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[8] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[9] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[10] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[11] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[12] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[13] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[14] + prev;
+            }
+            i += lane_count;
+
+            if (i < size) {
+                scan_out[i] = t_scan[15] + prev;
+            }
+            i += lane_count;
         }
     }
 }

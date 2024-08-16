@@ -7,15 +7,18 @@
 //
 //****************************************************************************
 @group(0) @binding(0)
-var<storage, read_write> scan: array<u32>;
+var<storage, read_write> scan_in: array<u32>;
 
 @group(0) @binding(1)
-var<storage, read_write> reduction: array<u32>;
+var<storage, read_write> lazy_padding_0: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> index: array<u32>;
+var<storage, read_write> reduction: array<u32>;
 
 @group(0) @binding(3)
+var<storage, read_write> index: array<u32>;
+
+@group(0) @binding(4)
 var<storage, read> info: array<u32>;
 
 const BLOCK_DIM: u32 = 256;
@@ -28,8 +31,8 @@ fn main(
     let thread_blocks: u32 = info[1];
     let stride = griddim.x * BLOCK_DIM;
     for(var i: u32 = id.x; i < size; i += stride){
-        scan[i] = 1u;
-        //scan[i] = i + 1u;
+        scan_in[i] = 1u;
+        //scan_in[i] = i + 1u;
     }
 
     for(var i: u32 = id.x; i < thread_blocks; i += stride){
