@@ -73,6 +73,8 @@ See the repository wiki for information on running tests.
 
 ## GPUPrefixSumsWGPU
 
+### WARNING: TESTING ONLY CURRENTLY, NOT FULLY PORTABLE
+
 Barebones implementation--no vectorization, no wave intrinsics--to be used as a testbed.
 
 Requirements:
