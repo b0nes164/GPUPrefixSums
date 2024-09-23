@@ -18,7 +18,193 @@ As of writing this (4/19/2024), it is unclear whether this method poses any adva
 
 A prefix sum, also called a scan, is a running total of a sequence of numbers at the n-th element. If the prefix sum is inclusive the n-th element is included in that total, if it is exclusive, the n-th element is not included. The prefix sum is one of the most important algorithmic primitives in parallel computing, underpinning everything from [sorting](https://arxiv.org/abs/2206.01784), to [compression](https://arxiv.org/abs/1311.2540), to [graph traversal](https://dl.acm.org/doi/10.1145/2370036.2145832).
 
-The survey can be found in the wiki.
+# Basic Scans
+
+<details open>
+<summary>
+
+### Kogge-Stone
+  
+</summary>
+
+![KoggesStoneImage](https://user-images.githubusercontent.com/68340554/224911618-6f54231c-251f-4321-93ec-b244a0af49f7.png)
+  
+</details>
+
+<details>
+
+<summary>
+
+### Sklansky
+
+</summary>
+
+![SklanskyFinal](https://user-images.githubusercontent.com/68340554/224912079-b1580955-b702-45f9-887a-7c1003825bf9.png)
+
+</details>
+
+<details>
+
+<summary>
+
+### Brent-Kung
+
+</summary>
+
+![BrentKungImage](https://user-images.githubusercontent.com/68340554/224912128-73301be2-0bba-4146-8e20-2f1f3bc7c549.png)
+
+</details>
+
+<details>
+
+<summary>
+
+### Reduce Scan
+
+</summary>
+
+![ReduceScanFinal](https://user-images.githubusercontent.com/68340554/224912530-2e1f2851-f531-4271-8246-d13983ccb584.png)
+
+</details>
+
+<details>
+
+<summary>
+
+### Raking Reduce-Scan
+
+</summary>
+
+![RakingReduceScan](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/3bc46762-1d61-41aa-aee5-1c492ff76ad6)
+
+</details>
+
+# Warp-Synchronized Scans
+  
+<details open>
+
+<summary>
+
+### Warp-Sized-Radix Brent-Kung
+  
+</summary>
+
+![RadixBrentKung](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d246240a-c088-4a74-a4c9-3cc2de12d1c9)
+
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Brent-Kung with Fused Upsweep-Downsweep
+
+</summary>
+
+![RadixBKFused](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/4ccfaf59-9864-4405-a89f-f950c70cda2b)
+
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Sklansky
+
+</summary>
+
+![WarpSklansky](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/e7dd3c56-334f-431a-a7bf-0d30fa64ea9a)
+
+</details>
+
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Serial
+
+</summary>
+
+![RadixSerial](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/11dccbcb-7ab4-4a99-aacb-704d0c4581fd)
+
+</details>
+  
+<details>
+
+<summary>
+
+### Warp-Sized-Radix Raking Reduce-Scan
+
+</summary>
+
+![WarpRakingReduce](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/72997c9e-ae94-41f0-83e8-c1122530f2e4)
+
+</details>
+
+# Block-Level Scan Pattern
+
+<details>
+
+<summary>
+
+### First Partition
+
+</summary>
+
+![Block Level 1](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/306d0908-da29-45a2-9f79-fea4c3856560)
+
+</details>
+
+<details>
+
+<summary>
+
+### Second Partition and Onwards
+
+</summary>
+
+![Block Level 2](https://github.com/b0nes164/GPUPrefixSums/assets/68340554/d5d47250-f5ff-4156-85cd-6ba2639fa237)
+
+</details>
+
+# Device Level Scan Pattern (Reduce-Then-Scan)
+
+<details>
+
+<summary>
+
+### Reduce
+
+</summary>
+
+![Device 1](https://github.com/user-attachments/assets/81c76371-5378-4554-bf0d-c6e6de2465de)
+
+</details>
+
+<details>
+
+<summary>
+
+### Scan Along the Intermediate Reductions
+
+</summary>
+
+![Device 2](https://github.com/user-attachments/assets/87712018-0f7a-401d-b81f-08e2ba4515a3)
+
+
+</details>
+
+<details>
+
+<summary>
+
+### Scan and pass in intermediate values
+
+</summary>
+
+![Device 3](https://github.com/user-attachments/assets/0bc7a8f4-dc67-4932-80f6-61aa2eda7236)
+
+</details>
 
 # Getting Started
 
