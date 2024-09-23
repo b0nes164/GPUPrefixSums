@@ -10,7 +10,7 @@ If you are interested in prefix sums for their use in radix sorting, check out G
 
 In Decoupled Fallback, a threadblock will spin for a set amount of cycles while waiting for the reduction of a preceding partition tile. If the maximum spin count is exceeded, the threadblock is free to perform a fallback operation. Multiple thread blocks are allowed to perform fallbacks on the same deadlocking tile, but through use of atomic compare and swap, only one thread block ends up broadcasting its reduction in device memory. Although this means potentially performing redundant calculations, the upside is that fallback performance is no longer limited by the latency of signal propagation between thread blocks.
 
-As of writing this (4/19/2024), it is unclear whether this method poses any advantages over the "scalar fallback" method first proprosed by Levien [here](https://raphlinus.github.io/gpu/2021/11/17/prefix-sum-portable.html). More testing is required.
+As of writing this 9/22/2024, Decoupled Fallback shows promising results on Apple M GPU's. However the version included here are out of date, with the most up-to-date development occuring in [Vello](https://github.com/linebender/vello).
 
 # Survey
 
@@ -198,7 +198,7 @@ A prefix sum, also called a scan, is a running total of a sequence of numbers at
 
 <summary>
 
-### Scan and pass in intermediate values
+### Scan and Pass in Intermediate Values
 
 </summary>
 
