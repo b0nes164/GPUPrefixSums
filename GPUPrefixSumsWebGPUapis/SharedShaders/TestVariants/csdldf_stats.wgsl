@@ -11,6 +11,7 @@
 struct InfoStruct
 {
     size: u32,
+    vec_size: u32,
     thread_blocks: u32,
 };
 
@@ -88,7 +89,7 @@ fn main(
 
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                if(i < info.size){
+                if(i < info.vec_size){
                     t_scan[k] = scan_in[i];
                     t_scan[k].y += t_scan[k].x;
                     t_scan[k].z += t_scan[k].y;
@@ -289,7 +290,7 @@ fn main(
 
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                if(i < info.size){
+                if(i < info.vec_size){
                     scan_out[i] = t_scan[k] + prev;
                 }
                 i += lane_count;

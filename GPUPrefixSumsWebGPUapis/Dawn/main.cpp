@@ -100,26 +100,22 @@ int GetGPUContext(GPUContext* context, uint32_t timestampCount) {
     options.backendType = wgpu::BackendType::Undefined;  // specify as needed
 
     wgpu::Adapter adapter;
-    wgpu::RequestAdapterCallbackInfo adapterCallback = {};
-    adapterCallback.nextInChain = nullptr;
-    adapterCallback.mode = wgpu::CallbackMode::WaitAnyOnly;
-    adapterCallback.callback = [](WGPURequestAdapterStatus status,
-                                  WGPUAdapter adapter, WGPUStringView message,
-                                  void* userdata) {
-        if (status != WGPURequestAdapterStatus_Success) {
-            std::cerr << "Failed to get an adapter:"
-                      << std::string(message.data, message.length);
-            return;
-        }
-        *static_cast<wgpu::Adapter*>(userdata) =
-            wgpu::Adapter::Acquire(adapter);
-    };
-    adapterCallback.userdata = &adapter;
-    instance.WaitAny(instance.RequestAdapter(&options, adapterCallback),
-                     UINT64_MAX);
-    if (adapter == nullptr) {
-        std::cerr << "RequestAdapter failed!\n";
-        return EXIT_FAILURE;
+    std::promise<void> adaptPromise;
+    instance.RequestAdapter(
+        &options, wgpu::CallbackMode::AllowProcessEvents,
+        [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapt,
+            wgpu::StringView) {
+            if (status == wgpu::RequestAdapterStatus::Success) {
+                adapter = adapt;
+            } else {
+                std::cerr << "Failed to get adapter" << std::endl;
+            }
+            adaptPromise.set_value();
+        });
+    std::future<void> adaptFuture = adaptPromise.get_future();
+    while (adaptFuture.wait_for(std::chrono::milliseconds(10)) ==
+           std::future_status::timeout) {
+        instance.ProcessEvents();
     }
 
     wgpu::AdapterInfo info{};
@@ -162,11 +158,28 @@ int GetGPUContext(GPUContext* context, uint32_t timestampCount) {
     errorCallbackInfo.userdata = nullptr;
     devDescriptor.uncapturedErrorCallbackInfo = errorCallbackInfo;
 
-    wgpu::Device device = adapter.CreateDevice(&devDescriptor);
+    wgpu::Device device;
+    std::promise<void> devPromise;
+    adapter.RequestDevice(
+        &devDescriptor, wgpu::CallbackMode::AllowProcessEvents,
+        [&](wgpu::RequestDeviceStatus status, wgpu::Device dev,
+            wgpu::StringView) {
+            if (status == wgpu::RequestDeviceStatus::Success) {
+                device = dev;
+            } else {
+                std::cerr << "Failed to get device" << std::endl;
+            }
+            devPromise.set_value();
+        });
+    std::future<void> devFuture = devPromise.get_future();
+    while (devFuture.wait_for(std::chrono::milliseconds(10)) ==
+           std::future_status::timeout) {
+        instance.ProcessEvents();
+    }
     wgpu::Queue queue = device.GetQueue();
 
     // Check features if necessary
-    //  wgpu::FeatureName features[2];
+    //  wgpu::FeatureName features[reqFeatures.size()];
     //  size_t featureCount = device.EnumerateFeatures(features);
     //  std::cout << "Supported features:" << std::endl;
     //  for (size_t i = 0; i < featureCount; ++i) {
@@ -199,7 +212,7 @@ void GetGPUBuffers(const wgpu::Device& device, GPUBuffers* buffs,
                    uint32_t size, uint32_t miscSize, uint32_t maxReadbackSize) {
     wgpu::BufferDescriptor infoDesc = {};
     infoDesc.label = "Info";
-    infoDesc.size = sizeof(uint32_t) * 2;
+    infoDesc.size = sizeof(uint32_t) * 3;
     infoDesc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
     wgpu::Buffer info = device.CreateBuffer(&infoDesc);
 
@@ -556,6 +569,8 @@ void ReadbackSync(const GPUContext& gpu, wgpu::Buffer* dstReadback,
                     dstReadback->GetConstMappedRange(0, readbackSizeBytes);
                 std::memcpy(readOut->data(), data, readbackSizeBytes);
                 dstReadback->Unmap();
+            } else {
+                std::cerr << "Bad readback" << std::endl;
             }
             promise.set_value();
         });
@@ -596,13 +611,13 @@ bool ValidateSync(const GPUContext& gpu, GPUBuffers* buffs,
     return testPassed;
 }
 
-bool ValidateGenericSync(const GPUContext& gpu, GPUBuffers* buffs,
-                         const Shaders& shaders) {
+bool ValidateGeneric(const GPUContext& gpu, GPUBuffers* buffs,
+                     const Shaders& shaders) {
     return ValidateSync(gpu, buffs, shaders.validate);
 }
 
-bool ValidateStructSync(const GPUContext& gpu, GPUBuffers* buffs,
-                        const Shaders& shaders) {
+bool ValidateStruct(const GPUContext& gpu, GPUBuffers* buffs,
+                    const Shaders& shaders) {
     return ValidateSync(gpu, buffs, shaders.validateStruct);
 }
 
@@ -659,10 +674,7 @@ void InitializeUniforms(const GPUContext& gpu, GPUBuffers* buffs, uint32_t size,
     comEncDesc.label = "Initialize Uniforms Command Encoder";
     wgpu::CommandEncoder comEncoder =
         gpu.device.CreateCommandEncoder(&comEncDesc);
-    std::vector<uint32_t> info{
-        (size + 3) /
-            4,  // All scans are vectorized, so we use the vectorized value here
-        threadBlocks};
+    std::vector<uint32_t> info{size, (size + 3) / 4, threadBlocks};
     gpu.queue.WriteBuffer(buffs->info, 0ULL, info.data(),
                           info.size() * sizeof(uint32_t));
     wgpu::CommandBuffer comBuffer = comEncoder.Finish();
@@ -878,13 +890,13 @@ ScanType ParseScanType(const std::string& str) {
 
 int main(int argc, char* argv[]) {
     constexpr uint32_t MISC_SIZE =
-        4;      // Max scratch memory we use to track various stats
+        4;  // Max scratch memory we use to track various stats
     constexpr uint32_t PART_SIZE =
-        4096;   // MUST match the partition size specified in shaders.
+        4096;  // MUST match the partition size specified in shaders.
     constexpr uint32_t MAX_TIMESTAMPS =
-        3;      // Max number of passes to track with our query set
+        3;  // Max number of passes to track with our query set
     constexpr uint32_t MAX_READBACK_SIZE =
-        8192;   // Max size of our readback buffer
+        8192;  // Max size of our readback buffer
 
     if (argc != 4) {
         std::cerr << "Usage: <Scan Type: String> <Input Size as Power of Two: "
@@ -926,14 +938,14 @@ int main(int argc, char* argv[]) {
     }
 
     uint32_t size =
-        1 << powerOfTwo;            // Input size to test, must be a multiple of 4
-    uint32_t threadBlocks =         // Thread Blocks to launch based on input
+        1 << powerOfTwo;     // Input size to test, must be a multiple of 4
+    uint32_t threadBlocks =  // Thread Blocks to launch based on input
         (size + PART_SIZE - 1) / PART_SIZE;
     uint32_t readbackSize =
-        256;                        // How many elements to readback, must be less than max
-    bool shouldValidate = true;     // Perform validation?
-    bool shouldReadback = false;    // Use readback to sanity check results
-    bool shouldTime = true;         // Time results?
+        256;  // How many elements to readback, must be less than max
+    bool shouldValidate = true;   // Perform validation?
+    bool shouldReadback = false;  // Use readback to sanity check results
+    bool shouldTime = true;       // Time results?
 
     GPUContext gpu;
     if (GetGPUContext(&gpu, MAX_TIMESTAMPS) == EXIT_FAILURE) {
@@ -954,34 +966,33 @@ int main(int argc, char* argv[]) {
     try {
         switch (scan_type) {
             case ScanType::Rts:
-                Run("RTS", args, RTS, ValidateGenericSync);
+                Run("RTS", args, RTS, ValidateGeneric);
                 break;
             case ScanType::Csdl:
-                Run("CSDL", args, CSDL, ValidateGenericSync);
+                Run("CSDL", args, CSDL, ValidateGeneric);
                 break;
             case ScanType::Csdldf:
-                Run("CSDLDf", args, CSDLDF, ValidateGenericSync);
+                Run("CSDLDf", args, CSDLDF, ValidateGeneric);
                 break;
             case ScanType::CsdldfStats:
                 args.shouldGetStats = true;
-                Run("CSDLDf_Stats", args, CSDLDFStats, ValidateGenericSync);
+                Run("CSDLDf_Stats", args, CSDLDFStats, ValidateGeneric);
                 break;
             case ScanType::CsdldfOcc:
                 args.shouldGetOcc = true;
-                Run("CSDLDf_Occ", args, CSDLDFOcc, ValidateGenericSync);
+                Run("CSDLDf_Occ", args, CSDLDFOcc, ValidateGeneric);
                 break;
             case ScanType::CsdldfStruct:
-                Run("CSDLDf_Struct", args, CSDLDFStruct, ValidateStructSync);
+                Run("CSDLDf_Struct", args, CSDLDFStruct, ValidateStruct);
                 break;
             case ScanType::CsdldfStructStats:
                 args.shouldGetStats = true;
                 Run("CSDLDf_Struct_Stats", args, CSDLDFStructStats,
-                    ValidateStructSync);
+                    ValidateStruct);
                 break;
             case ScanType::CsdldfStructOcc:
                 args.shouldGetOcc = true;
-                Run("CSDLDf_Struct_Occ", args, CSDLDFStructOcc,
-                    ValidateStructSync);
+                Run("CSDLDf_Struct_Occ", args, CSDLDFStructOcc, ValidateStruct);
                 break;
             default:
                 std::cerr << "Error: Unsupported scan type" << std::endl;

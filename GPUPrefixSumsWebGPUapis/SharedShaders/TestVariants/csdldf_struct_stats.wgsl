@@ -11,6 +11,7 @@
 struct InfoStruct
 {
     size: u32,
+    vec_size: u32,
     thread_blocks: u32,
 };
 
@@ -88,7 +89,7 @@ fn main(
 
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                if(i < info.size){
+                if(i < info.vec_size){
                     t_scan[k] = scan_in[i];
                 }
                 i += lane_count;
@@ -272,27 +273,31 @@ fn main(
                 if(threadid.x == 0u){
                     var all_complete = true;
                     for(var k = 0u; k < STRUCT_MEMBERS; k += 1u){
-                        if(!red_complete[k] && !inc_complete[k]){
-                            //Max will store when no insertion has been made, but will not overwrite a tile
-                            //which has already inserted, or been updated to FLAG_INCLUSIVE
-                            let wg_f_red = wg_fallback[wgSpineSize - 1u][k];
-                            let f_payload = atomicMax(&reduction[fallback_id][k],
-                                (wg_f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
-                            if(f_payload == 0u){
-                                prev_red[k] += wg_f_red;
-                                successful_fallback_insertions += 1u;
-                            } else {
-                                prev_red[k] += f_payload >> 2u;
-                            }
+                        if(!red_complete[k]){
+                            if(!inc_complete[k]){
+                                //Max will store when no insertion has been made, but will not overwrite a tile
+                                //which has already inserted, or been updated to FLAG_INCLUSIVE
+                                let wg_f_red = wg_fallback[wgSpineSize - 1u][k];
+                                let f_payload = atomicMax(&reduction[fallback_id][k],
+                                    (wg_f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
+                                if(f_payload == 0u){
+                                    prev_red[k] += wg_f_red;
+                                    successful_fallback_insertions += 1u;
+                                } else {
+                                    prev_red[k] += f_payload >> 2u;
+                                }
 
-                            if(fallback_id == 0u || (f_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                                atomicStore(&reduction[part_id][k],
-                                    ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
-                                wg_lookback_broadcast[k] = prev_red[k];
-                                inc_complete[k] = true; 
-                            } else {
-                                all_complete = false;
+                                if(fallback_id == 0u || (f_payload & FLAG_MASK) == FLAG_INCLUSIVE){
+                                    atomicStore(&reduction[part_id][k],
+                                        ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
+                                    wg_lookback_broadcast[k] = prev_red[k];
+                                    inc_complete[k] = true; 
+                                } else {
+                                    all_complete = false;
+                                }
                             }
+                        } else {
+                            all_complete = false;
                         }
                     }
 
@@ -310,7 +315,8 @@ fn main(
     }
 
     {
-        let prev = wg_lookback_broadcast + select(vec4(0u, 0u, 0u, 0u), wg_reduce[sid - 1u], sid != 0u);
+        let prev = select(vec4(0u, 0u, 0u, 0u), wg_lookback_broadcast, part_id != 0u)
+            + select(vec4(0u, 0u, 0u, 0u), wg_reduce[sid - 1u], sid != 0u);
         let s_offset = laneid + sid * lane_count * VEC4_SPT;
         let dev_offset =  part_id * VEC_PART_SIZE;
         var i = s_offset + dev_offset;
@@ -324,7 +330,7 @@ fn main(
 
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                if(i < info.size){
+                if(i < info.vec_size){
                     scan_out[i] = t_scan[k] + prev;
                 }
                 i += lane_count;

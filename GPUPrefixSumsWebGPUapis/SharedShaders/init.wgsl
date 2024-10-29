@@ -10,6 +10,7 @@
 struct InfoStruct
 {
     size: u32,
+    vec_size: u32,
     thread_blocks: u32,
 };
 

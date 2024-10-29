@@ -104,7 +104,11 @@ impl GPUBuffers {
         let buffer_size = (size * std::mem::size_of::<u32>()) as u64;
 
         //Vectorize the size here
-        let info_info: Vec<u32> = vec![div_round_up(size as u32, 4), thread_blocks as u32];
+        let info_info: Vec<u32> = vec![
+            size as u32,
+            div_round_up(size as u32, 4),
+            thread_blocks as u32,
+        ];
         let info = gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -957,7 +961,7 @@ impl Tester {
                 self.resolve_time_query(&mut command, pass.pass_count())
             }
             self.gpu_context.queue.submit(Some(command.finish()));
-            
+
             //The first test is always discarded to prep caches and TLB
             if should_time && i != 0u32 {
                 total_time += self.time(pass.pass_count() as usize);
@@ -1099,13 +1103,13 @@ pub async fn run_the_runner(args: Vec<String>) {
         }
     };
 
-    let size: u32 = 1 << pow_of_two;        //Input size to test, must be a multiple of 4
-    let part_size: u32 = 4096;              //MUST match partition size described in shaders
+    let size: u32 = 1 << pow_of_two; //Input size to test, must be a multiple of 4
+    let part_size: u32 = 4096; //MUST match partition size described in shaders
     let thread_blocks =                //Thread Blocks to launch based on input
         div_round_up(size, part_size);
-    let max_pass_count: usize = 3;          //Max number of passes to track with our query set
-    let max_readback_size: usize = 8192;    //Max size of our readback buffer
-    let misc_size: usize = 4;               //Max scratch memory we use to track various stats
+    let max_pass_count: usize = 3; //Max number of passes to track with our query set
+    let max_readback_size: usize = 8192; //Max size of our readback buffer
+    let misc_size: usize = 4; //Max scratch memory we use to track various stats
     let tester = Tester::init(
         size,
         thread_blocks,
@@ -1115,10 +1119,10 @@ pub async fn run_the_runner(args: Vec<String>) {
     )
     .await;
 
-    let should_validate = true;     //Perform validation?
-    let should_readback = false;    //Use readback to sanity check results
-    let should_time = true;         //Time results?
-    let readback_size = 256;         //How many elements to readback, must be less than max
+    let should_validate = true; //Perform validation?
+    let should_readback = false; //Use readback to sanity check results
+    let should_time = true; //Time results?
+    let readback_size = 256; //How many elements to readback, must be less than max
     tester
         .run_test(
             should_readback,
