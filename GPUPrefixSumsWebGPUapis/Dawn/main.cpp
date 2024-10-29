@@ -113,7 +113,7 @@ int GetGPUContext(GPUContext* context, uint32_t timestampCount) {
             adaptPromise.set_value();
         });
     std::future<void> adaptFuture = adaptPromise.get_future();
-    while (adaptFuture.wait_for(std::chrono::milliseconds(10)) ==
+    while (adaptFuture.wait_for(std::chrono::microseconds(100)) ==
            std::future_status::timeout) {
         instance.ProcessEvents();
     }
@@ -172,7 +172,7 @@ int GetGPUContext(GPUContext* context, uint32_t timestampCount) {
             devPromise.set_value();
         });
     std::future<void> devFuture = devPromise.get_future();
-    while (devFuture.wait_for(std::chrono::milliseconds(10)) ==
+    while (devFuture.wait_for(std::chrono::microseconds(100)) ==
            std::future_status::timeout) {
         instance.ProcessEvents();
     }
@@ -439,7 +439,7 @@ void CreateShaderFromSource(const GPUContext& gpu, const GPUBuffers& buffs,
             promise.set_value();
         });
     std::future<void> future = promise.get_future();
-    while (future.wait_for(std::chrono::milliseconds(10)) ==
+    while (future.wait_for(std::chrono::microseconds(100)) ==
            std::future_status::timeout) {
         gpu.instance.ProcessEvents();
     }
@@ -536,7 +536,7 @@ void QueueSync(const GPUContext& gpu) {
             promise.set_value();
         });
     std::future<void> future = promise.get_future();
-    while (future.wait_for(std::chrono::milliseconds(10)) ==
+    while (future.wait_for(std::chrono::microseconds(100)) ==
            std::future_status::timeout) {
         gpu.instance.ProcessEvents();
     }
@@ -576,7 +576,7 @@ void ReadbackSync(const GPUContext& gpu, wgpu::Buffer* dstReadback,
         });
 
     std::future<void> future = promise.get_future();
-    while (future.wait_for(std::chrono::milliseconds(10)) ==
+    while (future.wait_for(std::chrono::microseconds(100)) ==
            std::future_status::timeout) {
         gpu.instance.ProcessEvents();
     }
