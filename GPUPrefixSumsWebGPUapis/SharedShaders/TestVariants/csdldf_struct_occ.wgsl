@@ -183,17 +183,17 @@ fn main(
                         for(var k = 0u; k < STRUCT_MEMBERS; k += 1u){
                             if(!inc_complete[k] && !red_complete[k]){
                                 let flag_payload = atomicLoad(&reduction[lookback_id][k]);
-                                if((flag_payload & FLAG_MASK) == FLAG_REDUCTION){
+                                if((flag_payload & FLAG_MASK) != FLAG_NOT_READY){
                                     spin_count = 0u;
                                     prev_red[k] += flag_payload >> 2u;
-                                    red_complete[k] = true;
-                                } else if((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                                    spin_count = 0u;
-                                    prev_red[k] += flag_payload >> 2u;
-                                    inc_complete[k] = true;
-                                    wg_lookback_broadcast[k] = prev_red[k];
-                                    atomicStore(&reduction[part_id][k],
-                                        ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
+                                    if((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE){
+                                        inc_complete[k] = true;
+                                        wg_lookback_broadcast[k] = prev_red[k];
+                                        atomicStore(&reduction[part_id][k],
+                                            ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
+                                    } else {
+                                        red_complete[k] = true;
+                                    }
                                 } else {
                                     can_advance = false;
                                 }
@@ -234,14 +234,14 @@ fn main(
                         let s_offset = laneid + sid * lane_count * VEC4_SPT;
                         let dev_offset =  fallback_id * VEC_PART_SIZE;
                         var i = s_offset + dev_offset;
-                        var f_red = vec4(0u, 0u, 0u, 0u);
+                        var t_red = vec4(0u, 0u, 0u, 0u);
 
                         for(var k = 0u; k < VEC4_SPT; k += 1u){
-                            f_red += scan_in[i];
+                            t_red += scan_in[i];
                             i += lane_count;
                         }
 
-                        let s_red = subgroupAdd(f_red);
+                        let s_red = subgroupAdd(t_red);
                         if(laneid == 0u){
                             wg_fallback[sid] = s_red;
                         }
@@ -280,11 +280,11 @@ fn main(
                                 if(!inc_complete[k]){
                                     //Max will store when no insertion has been made, but will not overwrite a tile
                                     //which has already inserted, or been updated to FLAG_INCLUSIVE
-                                    let wg_f_red = wg_fallback[wgSpineSize - 1u][k];
+                                    let f_red = wg_fallback[wgSpineSize - 1u][k];
                                     let f_payload = atomicMax(&reduction[fallback_id][k],
-                                        (wg_f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
+                                        (f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
                                     if(f_payload == 0u){
-                                        prev_red[k] += wg_f_red;
+                                        prev_red[k] += f_red;
                                     } else {
                                         prev_red[k] += f_payload >> 2u;
                                     }

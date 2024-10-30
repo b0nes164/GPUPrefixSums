@@ -72,6 +72,9 @@ struct TestArgs {
     bool shouldTime = false;
     bool shouldGetStats = false;
     bool shouldGetOcc = false;
+    uint32_t (*MainPass)(const TestArgs&, wgpu::CommandEncoder*) = nullptr;
+    bool (*ValidateSync)(const GPUContext&, GPUBuffers*,
+                         const Shaders&) = nullptr;
 };
 
 enum class ScanType {
@@ -591,7 +594,7 @@ void CopyAndReadbackSync(const GPUContext& gpu, wgpu::Buffer* srcReadback,
     ReadbackSync(gpu, dstReadback, readOut, readbackSize * sizeof(T));
 }
 
-bool ValidateSync(const GPUContext& gpu, GPUBuffers* buffs,
+bool ValidateBase(const GPUContext& gpu, GPUBuffers* buffs,
                   const ComputeShader& validate) {
     wgpu::CommandEncoderDescriptor comEncDesc = {};
     comEncDesc.label = "Validate Command Encoder";
@@ -613,12 +616,12 @@ bool ValidateSync(const GPUContext& gpu, GPUBuffers* buffs,
 
 bool ValidateGeneric(const GPUContext& gpu, GPUBuffers* buffs,
                      const Shaders& shaders) {
-    return ValidateSync(gpu, buffs, shaders.validate);
+    return ValidateBase(gpu, buffs, shaders.validate);
 }
 
 bool ValidateStruct(const GPUContext& gpu, GPUBuffers* buffs,
                     const Shaders& shaders) {
-    return ValidateSync(gpu, buffs, shaders.validateStruct);
+    return ValidateBase(gpu, buffs, shaders.validateStruct);
 }
 
 void ReadbackAndPrintSync(const GPUContext& gpu, GPUBuffers* buffs,
@@ -781,9 +784,7 @@ uint32_t CSDLDFStructOcc(const TestArgs& args,
     return passCount;
 }
 
-void Run(std::string testLabel, const TestArgs& args,
-         uint32_t (*MainPass)(const TestArgs&, wgpu::CommandEncoder*),
-         bool (*ValidateSync)(const GPUContext&, GPUBuffers*, const Shaders&)) {
+void Run(std::string testLabel, const TestArgs& args) {
     uint32_t totalSpins = 0;
     uint32_t fallbacksAttempted = 0;
     uint32_t successfulInsertions = 0;
@@ -796,7 +797,7 @@ void Run(std::string testLabel, const TestArgs& args,
         wgpu::CommandEncoder comEncoder =
             args.gpu.device.CreateCommandEncoder(&comEncDesc);
         SetComputePass(args.shaders.init, &comEncoder, 256);
-        uint32_t passCount = MainPass(args, &comEncoder);
+        uint32_t passCount = args.MainPass(args, &comEncoder);
         if (args.shouldTime) {
             ResolveTimestampQuery(&args.buffs, args.gpu.querySet, &comEncoder,
                                   passCount);
@@ -819,7 +820,8 @@ void Run(std::string testLabel, const TestArgs& args,
         }
 
         if (args.shouldValidate) {
-            testsPassed += ValidateSync(args.gpu, &args.buffs, args.shaders);
+            testsPassed +=
+                args.ValidateSync(args.gpu, &args.buffs, args.shaders);
         }
     }
     std::cout << std::endl;
@@ -966,33 +968,48 @@ int main(int argc, char* argv[]) {
     try {
         switch (scan_type) {
             case ScanType::Rts:
-                Run("RTS", args, RTS, ValidateGeneric);
+                args.MainPass = RTS;
+                args.ValidateSync = ValidateGeneric;
+                Run("RTS", args);
                 break;
             case ScanType::Csdl:
-                Run("CSDL", args, CSDL, ValidateGeneric);
+                args.MainPass = CSDL;
+                args.ValidateSync = ValidateGeneric;
+                Run("CSDL", args);
                 break;
             case ScanType::Csdldf:
-                Run("CSDLDf", args, CSDLDF, ValidateGeneric);
+                args.MainPass = CSDLDF;
+                args.ValidateSync = ValidateGeneric;
+                Run("CSDLDf", args);
                 break;
             case ScanType::CsdldfStats:
                 args.shouldGetStats = true;
-                Run("CSDLDf_Stats", args, CSDLDFStats, ValidateGeneric);
+                args.MainPass = CSDLDFStats;
+                args.ValidateSync = ValidateGeneric;
+                Run("CSDLDf_Stats", args);
                 break;
             case ScanType::CsdldfOcc:
                 args.shouldGetOcc = true;
-                Run("CSDLDf_Occ", args, CSDLDFOcc, ValidateGeneric);
+                args.MainPass = CSDLDFOcc;
+                args.ValidateSync = ValidateGeneric;
+                Run("CSDLDf_Occ", args);
                 break;
             case ScanType::CsdldfStruct:
-                Run("CSDLDf_Struct", args, CSDLDFStruct, ValidateStruct);
+                args.MainPass = CSDLDFStruct;
+                args.ValidateSync = ValidateStruct;
+                Run("CSDLDf_Struct", args);
                 break;
             case ScanType::CsdldfStructStats:
                 args.shouldGetStats = true;
-                Run("CSDLDf_Struct_Stats", args, CSDLDFStructStats,
-                    ValidateStruct);
+                args.MainPass = CSDLDFStructStats;
+                args.ValidateSync = ValidateStruct;
+                Run("CSDLDf_Struct_Stats", args);
                 break;
             case ScanType::CsdldfStructOcc:
                 args.shouldGetOcc = true;
-                Run("CSDLDf_Struct_Occ", args, CSDLDFStructOcc, ValidateStruct);
+                args.MainPass = CSDLDFStructOcc;
+                args.ValidateSync = ValidateStruct;
+                Run("CSDLDf_Struct_Occ", args);
                 break;
             default:
                 std::cerr << "Error: Unsupported scan type" << std::endl;
