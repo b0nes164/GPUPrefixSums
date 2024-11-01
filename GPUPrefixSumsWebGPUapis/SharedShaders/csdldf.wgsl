@@ -203,15 +203,15 @@ fn main(
                     let s_offset = laneid + sid * lane_count * VEC4_SPT;
                     let dev_offset =  fallback_id * VEC_PART_SIZE;
                     var i = s_offset + dev_offset;
-                    var f_red = 0u;
+                    var t_red = 0u;
 
                     for(var k = 0u; k < VEC4_SPT; k += 1u){
                         let t = scan_in[i];
-                        f_red += dot(t, vec4<u32>(1u, 1u, 1u, 1u));
+                        t_red += dot(t, vec4<u32>(1u, 1u, 1u, 1u));
                         i += lane_count;
                     }
 
-                    let s_red = subgroupAdd(f_red);
+                    let s_red = subgroupAdd(t_red);
                     if(laneid == 0u){
                         wg_fallback[sid] = s_red;
                     }
@@ -245,11 +245,11 @@ fn main(
                 if(threadid.x == 0u){
                     //Max will store when no insertion has been made, but will not overwrite a tile
                     //which has already inserted, or been updated to FLAG_INCLUSIVE
-                    let wg_f_red = wg_fallback[wgSpineSize - 1u];
+                    let f_red = wg_fallback[wgSpineSize - 1u];
                     let f_payload = atomicMax(&reduction[fallback_id],
-                       (wg_f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
+                       (f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
                     if(f_payload == 0u){
-                        prev_red += wg_f_red;
+                        prev_red += f_red;
                     } else {
                         prev_red += f_payload >> 2u;
                     }
