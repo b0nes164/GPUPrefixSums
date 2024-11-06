@@ -318,7 +318,7 @@ impl ComputeShader {
                     label: Some(&format!("Compute Pipeline {}", cs_label)),
                     layout: Some(&pipeline_layout_init),
                     module,
-                    entry_point,
+                    entry_point: Some(entry_point),
                     compilation_options: Default::default(),
                     cache: Default::default(),
                 });

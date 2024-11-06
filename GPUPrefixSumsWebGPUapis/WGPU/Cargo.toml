@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "22.0"
+wgpu = "23.0"
 pollster = "0.3"
 bytemuck = "1.16.3"
