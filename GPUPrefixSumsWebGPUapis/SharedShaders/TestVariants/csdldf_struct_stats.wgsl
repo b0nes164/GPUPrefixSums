@@ -97,10 +97,9 @@ fn main(
         }
 
         var prev = vec4(0u, 0u, 0u, 0u);
-        let greatestLane = lane_count - 1u;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
             t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
-            prev = subgroupShuffle(t_scan[k], greatestLane);
+            prev = subgroupShuffle(t_scan[k], lane_count - 1u);
         }
 
         if(laneid == lane_count - 1u){
@@ -110,41 +109,41 @@ fn main(
     workgroupBarrier();
 
     //Subgroup agnostic inclusive scan across subgroup reductions
-    let wgSpineSize = BLOCK_DIM / lane_count;
+    let spine_size = BLOCK_DIM / lane_count;
     {
-        let pred0 = threadid.x < wgSpineSize;
+        let pred0 = threadid.x < spine_size;
         let t0 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[threadid.x], pred0));
         if(pred0){
             wg_reduce[threadid.x] = t0;
         }
         workgroupBarrier();
 
-        let laneLog = countTrailingZeros(lane_count) + 1u;
-        var offset = laneLog;
-        var j = laneLog;
-        for(; j < (wgSpineSize >> 1u); j <<= laneLog){
+        let lane_log = u32(countTrailingZeros(lane_count));
+        var offset = lane_log;
+        var j = lane_count;
+        for(; j < (spine_size >> 1u); j <<= lane_log){
             let index1 = ((threadid.x + 1u) << offset) - 1u;
-            let pred1 = index1 < wgSpineSize;
+            let pred1 = index1 < spine_size;
             let t1 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[index1], pred1));
             if(pred1){
                 wg_reduce[index1] = t1;
             }
             workgroupBarrier();
 
-            if((threadid.x & ((j << laneLog) - 1u)) >= j){  //Guaranteed lane aligned
+            if((threadid.x & ((j << lane_log) - 1u)) >= j){  //Guaranteed lane aligned
                 let pred2 = ((threadid.x + 1u) & (j - 1u))!= 0u;
                 let t2 = subgroupBroadcast(wg_reduce[((threadid.x >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
                 if(pred2){
                     wg_reduce[threadid.x] += t2;
                 }
             }
-            offset += laneLog;
+            offset += lane_log;
         }
         workgroupBarrier();
 
-        let finalIndex = threadid.x + j;    //Guaranteed lane aligned
-        if(finalIndex < wgSpineSize){    
-            wg_reduce[finalIndex] += subgroupBroadcast(wg_reduce[((finalIndex >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
+        let final_index = threadid.x + j;    //Guaranteed lane aligned
+        if(final_index < spine_size){    
+            wg_reduce[final_index] += subgroupBroadcast(wg_reduce[((final_index >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
         }
     }
     workgroupBarrier();
@@ -152,7 +151,7 @@ fn main(
     //Device broadcast
     if(threadid.x == 0u){
         for(var k = 0u; k < STRUCT_MEMBERS; k += 1u){
-            atomicStore(&reduction[part_id][k], (wg_reduce[wgSpineSize - 1u][k] << 2u) |
+            atomicStore(&reduction[part_id][k], (wg_reduce[spine_size - 1u][k] << 2u) |
                 select(FLAG_INCLUSIVE, FLAG_REDUCTION, part_id != 0u));
         }
     }
@@ -187,7 +186,7 @@ fn main(
                                     inc_complete[k] = true;
                                     wg_lookback_broadcast[k] = prev_red[k];
                                     atomicStore(&reduction[part_id][k],
-                                        ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
+                                        ((prev_red[k] + wg_reduce[spine_size - 1u][k]) << 2u) | FLAG_INCLUSIVE);
                                 } else {
                                     red_complete[k] = true;
                                 }
@@ -249,25 +248,24 @@ fn main(
 
                 //Subgroup agnostic reduction across fallback subgroup reductions
                 {
-                    let pred0 = threadid.x < wgSpineSize;
+                    let pred0 = threadid.x < spine_size;
                     let t0 = subgroupAdd(select(vec4(0u, 0u, 0u, 0u), wg_fallback[threadid.x], pred0));
                     if(pred0){
                         wg_fallback[threadid.x] = t0;
                     }
                     workgroupBarrier();
 
-                    let laneLog = countTrailingZeros(lane_count) + 1u;
-                    var offset = laneLog;
-                    for(var j = lane_count; j < (wgSpineSize >> 1u); j <<= laneLog){
-
+                    let lane_log = u32(countTrailingZeros(lane_count));
+                    var offset = lane_log;
+                    for(var j = lane_count; j < (spine_size >> 1u); j <<= lane_log){
                         let index1 = ((threadid.x + 1u) << offset) - 1u;
-                        let pred1 = index1 < wgSpineSize;
+                        let pred1 = index1 < spine_size;
                         let t1 = subgroupAdd(select(vec4(0u, 0u, 0u, 0u), wg_fallback[index1], pred1));
                         if(pred1){
                             wg_fallback[index1] = t1;
                         }
                         workgroupBarrier();
-                        offset += laneLog;
+                        offset += lane_log;
                     }
                 }
 
@@ -279,7 +277,7 @@ fn main(
                             if(!inc_complete[k]){
                                 //Max will store when no insertion has been made, but will not overwrite a tile
                                 //which has already inserted, or been updated to FLAG_INCLUSIVE
-                                let f_red = wg_fallback[wgSpineSize - 1u][k];
+                                let f_red = wg_fallback[spine_size - 1u][k];
                                 let f_payload = atomicMax(&reduction[fallback_id][k],
                                     (f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
                                 if(f_payload == 0u){
@@ -291,7 +289,7 @@ fn main(
 
                                 if(fallback_id == 0u || (f_payload & FLAG_MASK) == FLAG_INCLUSIVE){
                                     atomicStore(&reduction[part_id][k],
-                                        ((prev_red[k] + wg_reduce[wgSpineSize - 1u][k]) << 2u) | FLAG_INCLUSIVE);
+                                        ((prev_red[k] + wg_reduce[spine_size - 1u][k]) << 2u) | FLAG_INCLUSIVE);
                                     wg_lookback_broadcast[k] = prev_red[k];
                                     inc_complete[k] = true; 
                                 } else {

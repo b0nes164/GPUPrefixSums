@@ -83,30 +83,30 @@ fn reduce(
     workgroupBarrier();
 
     //Subgroup agnostic reduction across subgroup reductions
-    let redSize = BLOCK_DIM / lane_count;
-    let pred0 = threadid.x < redSize;
+    let spine_size = BLOCK_DIM / lane_count;
+    let pred0 = threadid.x < spine_size;
     let t0 = subgroupAdd(select(0u, wg_reduce[threadid.x], pred0));
     if(pred0){
         wg_reduce[threadid.x] = t0;
     }
     workgroupBarrier();
 
-    let laneLog = countTrailingZeros(lane_count) + 1u;
-    var offset = laneLog;
-    for(var j = lane_count; j < (redSize >> 1u); j <<= laneLog){
+    let lane_log = u32(countTrailingZeros(lane_count));
+    var offset = lane_log;
+    for(var j = lane_count; j < (spine_size >> 1u); j <<= lane_log){
 
         let index1 = ((threadid.x + 1u) << offset) - 1u;
-        let pred1 = index1 < redSize;
+        let pred1 = index1 < spine_size;
         let t1 = subgroupAdd(select(0u, wg_reduce[index1], pred1));
         if(pred1){
             wg_reduce[index1] = t1;
         }
         workgroupBarrier();
-        offset += laneLog;
+        offset += lane_log;
     }
 
     if(threadid.x == 0u){
-        reduction[wgid.x] = wg_reduce[redSize - 1u];
+        reduction[wgid.x] = wg_reduce[spine_size - 1u];
     }
 }
 
@@ -119,7 +119,7 @@ fn spine_scan(
     
     let sid = threadid.x / lane_count;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
     let s_offset = laneid + sid * lane_count * SPINE_SPT;
-    let s_scanSize = BLOCK_DIM / lane_count;
+    let local_spine_size = BLOCK_DIM / lane_count;
     let aligned_size = (info.thread_blocks + SPINE_PART_SIZE - 1u) / SPINE_PART_SIZE * SPINE_PART_SIZE;
     var t_scan = array<u32, SPINE_SPT>();
     
@@ -142,45 +142,45 @@ fn spine_scan(
         }
 
         if(laneid == lane_count - 1u){
-            wg_reduce[sid] = t_scan[SPINE_SPT - 1u];
+            wg_reduce[sid] = prev;
         }
         workgroupBarrier();
 
         //Subgroup agnostic inclusive scan across subgroup reductions
         {
-            let pred0 = threadid.x < s_scanSize;
+            let pred0 = threadid.x < local_spine_size;
             let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred0));
             if(pred0){
                 wg_reduce[threadid.x] = t0;
             }
             workgroupBarrier();
 
-            let laneLog = countTrailingZeros(lane_count) + 1u;
-            var offset = laneLog;
-            var j = laneLog;
-            for(; j < (s_scanSize >> 1u); j <<= laneLog){
+            let lane_log = u32(countTrailingZeros(lane_count));
+            var offset = lane_log;
+            var j = lane_count;
+            for(; j < (local_spine_size >> 1u); j <<= lane_log){
                 let index1 = ((threadid.x + 1u) << offset) - 1u;
-                let pred1 = index1 < s_scanSize;
+                let pred1 = index1 < local_spine_size;
                 let t1 = subgroupInclusiveAdd(select(0u, wg_reduce[index1], pred1));
                 if(pred1){
                     wg_reduce[index1] = t1;
                 }
                 workgroupBarrier();
 
-                if((threadid.x & ((j << laneLog) - 1u)) >= j){  //Guaranteed lane aligned
+                if((threadid.x & ((j << lane_log) - 1u)) >= j){  //Guaranteed lane aligned
                     let pred2 = ((threadid.x + 1u) & (j - 1u))!= 0u;
                     let t2 = subgroupBroadcast(wg_reduce[((threadid.x >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
                     if(pred2){
                         wg_reduce[threadid.x] += t2;
                     }
                 }
-                offset += laneLog;
+                offset += lane_log;
             }
             workgroupBarrier();
 
-            let finalIndex = threadid.x + j;    //Guaranteed lane aligned
-            if(finalIndex < s_scanSize){    
-                wg_reduce[finalIndex] += subgroupBroadcast(wg_reduce[((finalIndex >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
+            let final_index = threadid.x + j;    //Guaranteed lane aligned
+            if(final_index < local_spine_size){    
+                wg_reduce[final_index] += subgroupBroadcast(wg_reduce[((final_index >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
             }
         }
         workgroupBarrier();
@@ -196,7 +196,7 @@ fn spine_scan(
             }
         }
 
-        prev_red += subgroupBroadcast(wg_reduce[s_scanSize - 1u], 0u);
+        prev_red += subgroupBroadcast(wg_reduce[local_spine_size - 1u], 0u);
         workgroupBarrier();
     }
 }    
@@ -255,40 +255,40 @@ fn downsweep(
 
     //Subgroup agnostic inclusive scan across subgroup reductions
     {
-        let scanSize = BLOCK_DIM / lane_count;
-        let pred0 = threadid.x < scanSize;
+        let spine_size = BLOCK_DIM / lane_count;
+        let pred0 = threadid.x < spine_size;
         let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred0));
         if(pred0){
             wg_reduce[threadid.x] = t0;
         }
         workgroupBarrier();
 
-        let laneLog = countTrailingZeros(lane_count) + 1u;
-        var offset = laneLog;
-        var j = laneLog;
-        for(; j < (scanSize >> 1u); j <<= laneLog){
+        let lane_log = u32(countTrailingZeros(lane_count));
+        var offset = lane_log;
+        var j = lane_count;
+        for(; j < (spine_size >> 1u); j <<= lane_log){
             let index1 = ((threadid.x + 1u) << offset) - 1u;
-            let pred1 = index1 < scanSize;
+            let pred1 = index1 < spine_size;
             let t1 = subgroupInclusiveAdd(select(0u, wg_reduce[index1], pred1));
             if(pred1){
                 wg_reduce[index1] = t1;
             }
             workgroupBarrier();
 
-            if((threadid.x & ((j << laneLog) - 1u)) >= j){  //Guaranteed lane aligned
+            if((threadid.x & ((j << lane_log) - 1u)) >= j){  //Guaranteed lane aligned
                 let pred2 = ((threadid.x + 1u) & (j - 1u))!= 0u;
                 let t2 = subgroupBroadcast(wg_reduce[((threadid.x >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
                 if(pred2){
                     wg_reduce[threadid.x] += t2;
                 }
             }
-            offset += laneLog;
+            offset += lane_log;
         }
         workgroupBarrier();
 
-        let finalIndex = threadid.x + j;    //Guaranteed lane aligned
-        if(finalIndex < scanSize){    
-            wg_reduce[finalIndex] += subgroupBroadcast(wg_reduce[((finalIndex >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
+        let final_index = threadid.x + j;    //Guaranteed lane aligned
+        if(final_index < spine_size){    
+            wg_reduce[final_index] += subgroupBroadcast(wg_reduce[((final_index >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
         }
     }
     workgroupBarrier();

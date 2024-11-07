@@ -108,40 +108,40 @@ fn main(
 
     //Subgroup agnostic inclusive scan across subgroup reductions
     {
-        let scanSize = BLOCK_DIM / lane_count;
-        let pred0 = threadid.x < scanSize;
+        let spine_size = BLOCK_DIM / lane_count;
+        let pred0 = threadid.x < spine_size;
         let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred0));
         if(pred0){
             wg_reduce[threadid.x] = t0;
         }
         workgroupBarrier();
 
-        let laneLog = countTrailingZeros(lane_count) + 1u;
-        var offset = laneLog;
-        var j = laneLog;
-        for(; j < (scanSize >> 1u); j <<= laneLog){
+        let lane_log = u32(countTrailingZeros(lane_count));
+        var offset = lane_log;
+        var j = lane_count;
+        for(; j < (spine_size >> 1u); j <<= lane_log){
             let index1 = ((threadid.x + 1u) << offset) - 1u;
-            let pred1 = index1 < scanSize;
+            let pred1 = index1 < spine_size;
             let t1 = subgroupInclusiveAdd(select(0u, wg_reduce[index1], pred1));
             if(pred1){
                 wg_reduce[index1] = t1;
             }
             workgroupBarrier();
 
-            if((threadid.x & ((j << laneLog) - 1u)) >= j){  //Guaranteed lane aligned
+            if((threadid.x & ((j << lane_log) - 1u)) >= j){  //Guaranteed lane aligned
                 let pred2 = ((threadid.x + 1u) & (j - 1u))!= 0u;
                 let t2 = subgroupBroadcast(wg_reduce[((threadid.x >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
                 if(pred2){
                     wg_reduce[threadid.x] += t2;
                 }
             }
-            offset += laneLog;
+            offset += lane_log;
         }
         workgroupBarrier();
 
-        let finalIndex = threadid.x + j;    //Guaranteed lane aligned
-        if(finalIndex < scanSize){    
-            wg_reduce[finalIndex] += subgroupBroadcast(wg_reduce[((finalIndex >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
+        let final_index = threadid.x + j;    //Guaranteed lane aligned
+        if(final_index < spine_size){    
+            wg_reduce[final_index] += subgroupBroadcast(wg_reduce[((final_index >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
         }
     }
     workgroupBarrier();
