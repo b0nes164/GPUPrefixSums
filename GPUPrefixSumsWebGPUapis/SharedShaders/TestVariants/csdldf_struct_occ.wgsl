@@ -118,43 +118,34 @@ fn main(
         workgroupBarrier();
 
         //Subgroup agnostic inclusive scan across subgroup reductions
-        let spine_size = BLOCK_DIM / lane_count;
-        {
-            let pred0 = threadid.x < spine_size;
-            let t0 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[threadid.x], pred0));
-            if(pred0){
-                wg_reduce[threadid.x] = t0;
-            }
-            workgroupBarrier();
-
-            let lane_log = u32(countTrailingZeros(lane_count));
-            var offset = lane_log;
-            var j = lane_count;
-            for(; j < (spine_size >> 1u); j <<= lane_log){
-                let index1 = ((threadid.x + 1u) << offset) - 1u;
-                let pred1 = index1 < spine_size;
-                let t1 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[index1], pred1));
-                if(pred1){
-                    wg_reduce[index1] = t1;
+        //At no point is a subgroup function called here in a state of subgroup divergence
+        let lane_log = u32(countTrailingZeros(lane_count));
+        let spine_size = BLOCK_DIM >> lane_log;
+        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1) / lane_log * lane_log);
+        {   
+            var offset = 0u;
+            for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+                let i0 = ((threadid.x) << offset) - 1u;
+                let pred0 = i0 < spine_size;
+                let t0 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[i0], pred0));
+                if(pred0){
+                    wg_reduce[i0] = t0;
                 }
                 workgroupBarrier();
 
-                if((threadid.x & ((j << lane_log) - 1u)) >= j){  //Guaranteed lane aligned
-                    let pred2 = ((threadid.x + 1u) & (j - 1u))!= 0u;
-                    let t2 = subgroupBroadcast(wg_reduce[((threadid.x >> offset) << offset) - 1u], 0u); //index guaranteed gt 0
-                    if(pred2){
-                        wg_reduce[threadid.x] += t2;
+                if(j != lane_count){
+                    let rshift = j >> lane_log;
+                    let i1 = threadid.x + rshift;
+                    if ((i1 & (j - 1u)) >= rshift){
+                        let t1 = subgroupBroadcast(wg_reduce[((i1 >> offset) << offset) - 1u], 0u);
+                        if(((i1 + 1) & (rshift - 1u)) != 0u){
+                            wg_reduce[i1] += t1;
+                        }
                     }
                 }
                 offset += lane_log;
             }
-            workgroupBarrier();
-
-            let final_index = threadid.x + j;    //Guaranteed lane aligned
-            if(final_index < spine_size){    
-                wg_reduce[final_index] += subgroupBroadcast(wg_reduce[((final_index >> offset) << offset) - 1u], 0u); //index guaranteed gt 0 
-            }
-        }
+        }   
         workgroupBarrier();
 
         //Device broadcast
@@ -248,22 +239,15 @@ fn main(
                     workgroupBarrier();
 
                     //Subgroup agnostic reduction across fallback subgroup reductions
+                    //At no point is a subgroup function called here in a state of subgroup divergence
                     {
-                        let pred0 = threadid.x < spine_size;
-                        let t0 = subgroupAdd(select(vec4(0u, 0u, 0u, 0u), wg_fallback[threadid.x], pred0));
-                        if(pred0){
-                            wg_fallback[threadid.x] = t0;
-                        }
-                        workgroupBarrier();
-
-                        let lane_log = u32(countTrailingZeros(lane_count));
-                        var offset = lane_log;
-                        for(var j = lane_count; j < (spine_size >> 1u); j <<= lane_log){
-                            let index1 = ((threadid.x + 1u) << offset) - 1u;
-                            let pred1 = index1 < spine_size;
-                            let t1 = subgroupAdd(select(vec4(0u, 0u, 0u, 0u), wg_fallback[index1], pred1));
-                            if(pred1){
-                                wg_fallback[index1] = t1;
+                        var offset = 0u;
+                        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+                            let i = ((threadid.x + 1) << offset) - 1u;
+                            let pred0 = i < spine_size;
+                            let t = subgroupAdd(select(vec4(0u, 0u, 0u, 0u), wg_fallback[i], pred0));
+                            if(pred0 && (i & (j - 1u)) != 0u){
+                                wg_fallback[i] = t;
                             }
                             workgroupBarrier();
                             offset += lane_log;
