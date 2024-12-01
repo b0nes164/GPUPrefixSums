@@ -13,31 +13,24 @@
  *
  ******************************************************************************/
 #pragma once
+#include "UtilityKernels.cuh"
+#include "cub/device/device_scan.cuh"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include "cub/device/device_scan.cuh"
-#include "UtilityKernels.cuh"
 
-class CubDispatcher
-{
+class CubDispatcher {
     const uint32_t k_maxSize;
     uint32_t* m_scan;
 
-public:
-    CubDispatcher(uint32_t size) : k_maxSize(size)
-    {
+   public:
+    CubDispatcher(uint32_t size) : k_maxSize(size) {
         cudaMalloc(&m_scan, k_maxSize * sizeof(uint32_t));
     }
 
-    ~CubDispatcher()
-    {
-        cudaFree(m_scan);
-    }
+    ~CubDispatcher() { cudaFree(m_scan); }
 
-    void BatchTimingCubChainedScan(uint32_t size, uint32_t batchCount)
-    {
-        if (size > k_maxSize)
-        {
+    void BatchTimingCubChainedScan(uint32_t size, uint32_t batchCount) {
+        if (size > k_maxSize) {
             printf("Error, requested test size exceeds max initialized size. \n");
             return;
         }
@@ -47,10 +40,8 @@ public:
         printf("Test size: %u\n", batchCount);
 
         void* d_temp_storage = NULL;
-        size_t   temp_storage_bytes = 0;
-        cub::DeviceScan::InclusiveSum(
-            d_temp_storage, temp_storage_bytes,
-            m_scan, size);
+        size_t temp_storage_bytes = 0;
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, m_scan, size);
 
         cudaMalloc(&d_temp_storage, temp_storage_bytes);
 
@@ -60,14 +51,11 @@ public:
         cudaEventCreate(&stop);
 
         float totalTime = 0.0f;
-        for (uint32_t i = 0; i <= batchCount; ++i)
-        {
-            InitOne <<<256, 256 >>> (m_scan, size);
+        for (uint32_t i = 0; i <= batchCount; ++i) {
+            InitOne<<<256, 256>>>(m_scan, size);
             cudaDeviceSynchronize();
             cudaEventRecord(start);
-            cub::DeviceScan::InclusiveSum(
-                d_temp_storage, temp_storage_bytes,
-                m_scan, size);
+            cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, m_scan, size);
             cudaEventRecord(stop);
             cudaEventSynchronize(stop);
 
@@ -83,6 +71,7 @@ public:
         printf("\n");
         totalTime /= 1000.0f;
         printf("Total time elapsed: %f\n", totalTime);
-        printf("Estimated speed at %u 32-bit elements: %E keys/sec\n\n", size, size / totalTime * batchCount);
+        printf("Estimated speed at %u 32-bit elements: %E keys/sec\n\n", size,
+               size / totalTime * batchCount);
     }
 };
