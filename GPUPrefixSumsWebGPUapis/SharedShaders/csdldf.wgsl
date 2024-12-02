@@ -121,7 +121,7 @@ fn main(
     {   
         var offset = 0u;
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-            let i0 = (threadid.x << offset) - 1u;
+            let i0 = (threadid.x << offset) - select(0u, 1u, j != lane_count);
             let pred0 = i0 < spine_size;
             let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
             if(pred0){
@@ -133,8 +133,9 @@ fn main(
                 let rshift = j >> lane_log;
                 let i1 = threadid.x + rshift;
                 if ((i1 & (j - 1u)) >= rshift){
-                    let t1 = wg_reduce[((i1 >> offset) << offset) - 1u];
-                    if(((i1 + 1u) & (rshift - 1u)) != 0u){
+                    let pred1 = i1 < spine_size;
+                    let t1 = select(0u, wg_reduce[((i1 >> offset) << offset) - 1u], pred1);
+                    if(pred1 && ((i1 + 1u) & (rshift - 1u)) != 0u){
                         wg_reduce[i1] += t1;
                     }
                 }

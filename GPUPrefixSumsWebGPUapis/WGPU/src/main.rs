@@ -355,58 +355,31 @@ impl Shaders {
         let valid_mod = gpu
             .device
             .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/validate.wgsl"));
-
-        let rts_mod: wgpu::ShaderModule;
-        let csdl_mod: wgpu::ShaderModule;
-        let csdldf_mod: wgpu::ShaderModule;
-        let csdldf_stats_mod: wgpu::ShaderModule;
-        let csdldf_occ_mod: wgpu::ShaderModule;
-        let csdldf_struct_mod: wgpu::ShaderModule;
-        let csdldf_struct_stats_mod: wgpu::ShaderModule;
-        let csdldf_struct_occ_mod: wgpu::ShaderModule;
-        unsafe {
-            rts_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/rts.wgsl"
-                ));
-            csdl_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/csdl.wgsl"
-                ));
-            csdldf_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/csdldf.wgsl"
-                ));
-            csdldf_stats_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/TestVariants/csdldf_stats.wgsl"
-                ));
-            csdldf_occ_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/TestVariants/csdldf_occ.wgsl"
-                ));
-            csdldf_struct_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/csdldf_struct.wgsl"
-                ));
-            csdldf_struct_stats_mod =
-                gpu.device
-                    .create_shader_module_unchecked(wgpu::include_wgsl!(
-                        "../../SharedShaders/TestVariants/csdldf_struct_stats.wgsl"
-                    ));
-            csdldf_struct_occ_mod = gpu
-                .device
-                .create_shader_module_unchecked(wgpu::include_wgsl!(
-                    "../../SharedShaders/TestVariants/csdldf_struct_occ.wgsl"
-                ));
-        }
-
+        let rts_mod = gpu
+            .device
+            .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/rts.wgsl"));
+        let csdl_mod = gpu
+            .device
+            .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/csdl.wgsl"));
+        let csdldf_mod = gpu
+            .device
+            .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/csdldf.wgsl"));
+        let csdldf_stats_mod = gpu.device.create_shader_module(wgpu::include_wgsl!(
+            "../../SharedShaders/TestVariants/csdldf_stats.wgsl"
+        ));
+        let csdldf_occ_mod = gpu.device.create_shader_module(wgpu::include_wgsl!(
+            "../../SharedShaders/TestVariants/csdldf_occ.wgsl"
+        ));
+        let csdldf_struct_mod = gpu.device.create_shader_module(wgpu::include_wgsl!(
+            "../../SharedShaders/csdldf_struct.wgsl"
+        ));
+        let csdldf_struct_stats_mod = gpu.device.create_shader_module(wgpu::include_wgsl!(
+            "../../SharedShaders/TestVariants/csdldf_struct_stats.wgsl"
+        ));
+        let csdldf_struct_occ_mod = gpu.device.create_shader_module(wgpu::include_wgsl!(
+            "../../SharedShaders/TestVariants/csdldf_struct_occ.wgsl"
+        ));
+        
         let init = ComputeShader::init(gpu, gpu_buffers, "main", &init_mod, "Init");
         let reduce = ComputeShader::init(gpu, gpu_buffers, "reduce", &rts_mod, "Reduce");
         let spine_scan =
