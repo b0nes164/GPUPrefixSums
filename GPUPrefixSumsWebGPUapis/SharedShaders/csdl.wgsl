@@ -106,13 +106,12 @@ fn main(
     }
     workgroupBarrier();
 
-    //Subgroup agnostic inclusive scan across subgroup reductions
-    //At no point is a subgroup function called here in a state of subgroup divergence
+    //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
     let lane_log = u32(countTrailingZeros(lane_count));
     let spine_size = BLOCK_DIM >> lane_log;
     {   
         var offset = 0u;
-        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1) / lane_log * lane_log);
+        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
             let i0 = ((threadid.x) << offset) - 1u;
             let pred0 = i0 < spine_size;
@@ -126,8 +125,8 @@ fn main(
                 let rshift = j >> lane_log;
                 let i1 = threadid.x + rshift;
                 if ((i1 & (j - 1u)) >= rshift){
-                    let t1 = subgroupBroadcast(wg_reduce[((i1 >> offset) << offset) - 1u], 0u);
-                    if(((i1 + 1) & (rshift - 1u)) != 0u){
+                    let t1 = wg_reduce[((i1 >> offset) << offset) - 1u];
+                    if(((i1 + 1u) & (rshift - 1u)) != 0u){
                         wg_reduce[i1] += t1;
                     }
                 }

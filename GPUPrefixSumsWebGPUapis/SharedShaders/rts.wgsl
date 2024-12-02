@@ -60,7 +60,7 @@ fn reduce(
     var i: u32 = s_offset + dev_offset;
 
     var s_red = 0u;
-    if(wgid.x < info.thread_blocks - 1){
+    if(wgid.x < info.thread_blocks - 1u){
         for(var k = 0u; k < VEC4_SPT; k += 1u){
             let t = scan_in[i];
             s_red += dot(t, vec4(1u, 1u, 1u, 1u));
@@ -68,7 +68,7 @@ fn reduce(
         }
     }
 
-    if(wgid.x == info.thread_blocks - 1){
+    if(wgid.x == info.thread_blocks - 1u){
         for(var k = 0u; k < VEC4_SPT; k += 1u){
             let t = select(vec4<u32>(0u, 0u, 0u, 0u), scan_in[i], i < info.vec_size);
             s_red += dot(t, vec4(1u, 1u, 1u, 1u));
@@ -82,17 +82,16 @@ fn reduce(
     }
     workgroupBarrier();
 
-    //Subgroup agnostic reduction across subgroup reductions
-    //At no point is a subgroup function called here in a state of subgroup divergence
+    //Non-divergent subgroup agnostic reduction across subgroup reductions
     let lane_log = u32(countTrailingZeros(lane_count));
     let spine_size = BLOCK_DIM >> lane_log;
-    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1) / lane_log * lane_log);
+    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
     var offset = 0u;
     for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-        let i = ((threadid.x + 1) << offset) - 1u;
+        let i = ((threadid.x + 1u) << offset) - 1u;
         let pred0 = i < spine_size;
         let t = subgroupAdd(select(0u, wg_reduce[i], pred0));
-        if(pred0 && (i & (j - 1u)) != 0u){
+        if(pred0){
             wg_reduce[i] = t;
         }
         workgroupBarrier();
@@ -115,7 +114,7 @@ fn spine_scan(
     let lane_log = u32(countTrailingZeros(lane_count));
     let s_offset = laneid + sid * lane_count * SPINE_SPT;
     let local_spine_size = BLOCK_DIM >> lane_log;
-    let local_aligned_size = 1u << ((u32(countTrailingZeros(local_spine_size)) + lane_log - 1) / lane_log * lane_log);
+    let local_aligned_size = 1u << ((u32(countTrailingZeros(local_spine_size)) + lane_log - 1u) / lane_log * lane_log);
     let aligned_size = (info.thread_blocks + SPINE_PART_SIZE - 1u) / SPINE_PART_SIZE * SPINE_PART_SIZE;
     var t_scan = array<u32, SPINE_SPT>();
     
@@ -142,12 +141,11 @@ fn spine_scan(
         }
         workgroupBarrier();
 
-        //Subgroup agnostic inclusive scan across subgroup reductions
-        //At no point is a subgroup function called here in a state of subgroup divergence
+        //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
         {   
             var offset = 0u;
             for(var j = lane_count; j <= local_aligned_size; j <<= lane_log){
-                let i0 = ((threadid.x) << offset) - 1u;
+                let i0 = (threadid.x << offset) - 1u;
                 let pred0 = i0 < local_spine_size;
                 let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
                 if(pred0){
@@ -159,8 +157,8 @@ fn spine_scan(
                     let rshift = j >> lane_log;
                     let i1 = threadid.x + rshift;
                     if ((i1 & (j - 1u)) >= rshift){
-                        let t1 = subgroupBroadcast(wg_reduce[((i1 >> offset) << offset) - 1u], 0u);
-                        if(((i1 + 1) & (rshift - 1u)) != 0u){
+                        let t1 = wg_reduce[((i1 >> offset) << offset) - 1u];
+                        if(((i1 + 1u) & (rshift - 1u)) != 0u){
                             wg_reduce[i1] += t1;
                         }
                     }
@@ -238,15 +236,14 @@ fn downsweep(
     }
     workgroupBarrier();
 
-    //Subgroup agnostic inclusive scan across subgroup reductions
-    //At no point is a subgroup function called here in a state of subgroup divergence
+    //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
     {   
         var offset = 0u;
         let lane_log = u32(countTrailingZeros(lane_count));
         let spine_size = BLOCK_DIM >> lane_log;
-        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1) / lane_log * lane_log);
+        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-            let i0 = ((threadid.x) << offset) - 1u;
+            let i0 = (threadid.x << offset) - 1u;
             let pred0 = i0 < spine_size;
             let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
             if(pred0){
@@ -258,8 +255,8 @@ fn downsweep(
                 let rshift = j >> lane_log;
                 let i1 = threadid.x + rshift;
                 if ((i1 & (j - 1u)) >= rshift){
-                    let t1 = subgroupBroadcast(wg_reduce[((i1 >> offset) << offset) - 1u], 0u);
-                    if(((i1 + 1) & (rshift - 1u)) != 0u){
+                    let t1 = wg_reduce[((i1 >> offset) << offset) - 1u];
+                    if(((i1 + 1u) & (rshift - 1u)) != 0u){
                         wg_reduce[i1] += t1;
                     }
                 }
