@@ -2,7 +2,7 @@
  * PrefixSumSurvey
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -272,13 +272,8 @@ void BlockSklanskyInclusive(uint3 gtid : SV_GroupThreadID)
     uint offset = 0;
     for (uint i = 1; i < e_size; i <<= 1)
     {
-        uint t;
         if (gtid.x & i)
-            t = b_prefixSum[((gtid.x >> offset) << offset) - 1];
-        DeviceMemoryBarrierWithGroupSync();
-        
-        if (gtid.x & i)
-            b_prefixSum[gtid.x] += t;
+            b_prefixSum[gtid.x] += b_prefixSum[((gtid.x >> offset) << offset) - 1];
         DeviceMemoryBarrierWithGroupSync();
         ++offset;
     }
@@ -290,13 +285,8 @@ void BlockSklanskyExclusive(uint3 gtid : SV_GroupThreadID)
     uint offset = 0;
     for (uint i = 1; i < e_size; i <<= 1)
     {
-        uint t;
         if (gtid.x & i)
-            t = b_prefixSum[((gtid.x >> offset) << offset) - 1];
-        DeviceMemoryBarrierWithGroupSync();
-        
-        if (gtid.x & i)
-            b_prefixSum[gtid.x] += t;
+            b_prefixSum[gtid.x] += b_prefixSum[((gtid.x >> offset) << offset) - 1];
         DeviceMemoryBarrierWithGroupSync();
         ++offset;
     }
@@ -968,16 +958,38 @@ inline void ScanExclusivePartial(uint gtid, uint partIndex)
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-//Scan over the reductions
-inline void LocalScanWGE16(uint gtid)
+// Non-divergent wave size agnostic scan across wave reductions
+inline void SpineScan(uint gtid)
 {
-    if (gtid < GROUP_SIZE / WaveGetLaneCount())
-        g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
-}
-
-inline void LocalScanWLT16(uint gtid)
-{
-
+    const uint laneLog = countbits(WaveGetLaneCount() - 1);
+    const uint spineSize = GROUP_SIZE >> laneLog;
+    const uint alignedSize = 1 << (countbits(spineSize - 1) + laneLog - 1) / laneLog * laneLog;
+    uint offset = 0;
+    for (uint j = WaveGetLaneCount(); j <= alignedSize; j <<= laneLog)
+    {
+        const uint t0 = j != WaveGetLaneCount() ? 1 : 0;
+        const uint i0 = (gtid + t0 << offset) - t0;
+        const bool pred0 = i0 < spineSize;
+        const uint t1 = pred0 ? g_reduction[i0] : 0;
+        const uint t2 = t1 + WavePrefixSum(t1);
+        if (pred0)
+            g_reduction[i0] = t2;
+        GroupMemoryBarrierWithGroupSync();
+        
+        if (j != WaveGetLaneCount())
+        {
+            const uint rshift = j >> laneLog;
+            const uint i1 = gtid + rshift;
+            if ((i1 & j - 1) >= rshift)
+            {
+                const bool pred1 = i1 < spineSize;
+                const uint t3 = pred1 ? g_reduction[((i1 >> offset) << offset) - 1] : 0;
+                if (pred1 && (i1 + 1 & rshift - 1) != 0)
+                    g_reduction[i1] += t3;
+            }
+        }
+        offset += laneLog;
+    }
 }
 
 inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
@@ -1014,11 +1026,7 @@ void TrueBlockInclusiveScan(uint3 gtid : SV_GroupThreadID)
         ScanInclusiveFull(gtid.x, partitionIndex);
         GroupMemoryBarrierWithGroupSync();
         
-        if (WaveGetLaneCount() >= 16)
-            LocalScanWGE16(gtid.x);
-        
-        if (WaveGetLaneCount() < 16)
-            LocalScanWLT16(gtid.x);
+        SpineScan(gtid.x);
         GroupMemoryBarrierWithGroupSync();
         
         const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
@@ -1031,11 +1039,7 @@ void TrueBlockInclusiveScan(uint3 gtid : SV_GroupThreadID)
     ScanInclusivePartial(gtid.x, partitionIndex);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() >= 16)
-        LocalScanWGE16(gtid.x);
-        
-    if (WaveGetLaneCount() < 16)
-        LocalScanWLT16(gtid.x);
+    SpineScan(gtid.x);
     GroupMemoryBarrierWithGroupSync();
         
     const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
@@ -1054,11 +1058,7 @@ void TrueBlockExclusiveScan(uint3 gtid : SV_GroupThreadID)
         ScanExclusiveFull(gtid.x, partitionIndex);
         GroupMemoryBarrierWithGroupSync();
         
-        if (WaveGetLaneCount() >= 16)
-            LocalScanWGE16(gtid.x);
-        
-        if (WaveGetLaneCount() < 16)
-            LocalScanWLT16(gtid.x);
+        SpineScan(gtid.x);
         GroupMemoryBarrierWithGroupSync();
         
         const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;
@@ -1071,11 +1071,7 @@ void TrueBlockExclusiveScan(uint3 gtid : SV_GroupThreadID)
     ScanExclusivePartial(gtid.x, partitionIndex);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() >= 16)
-        LocalScanWGE16(gtid.x);
-        
-    if (WaveGetLaneCount() < 16)
-        LocalScanWLT16(gtid.x);
+    SpineScan(gtid.x);
     GroupMemoryBarrierWithGroupSync();
         
     const uint prevReduction = (getWaveIndex(gtid.x) ? g_reduction[getWaveIndex(gtid.x) - 1] : 0) + reduction;

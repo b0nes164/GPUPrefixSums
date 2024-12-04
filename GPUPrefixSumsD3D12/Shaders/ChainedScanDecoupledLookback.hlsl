@@ -3,7 +3,7 @@
  * Chained Scan with Decoupled Lookback Implementation
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  * Based off of Research by:
@@ -19,25 +19,25 @@
 #define FLAG_INCLUSIVE  2           //Flag indicating this partition tile has summed all preceding tiles and added to its sum.
 #define FLAG_MASK       3           //Mask used to retrieve the flag
 
-globallycoherent RWStructuredBuffer<uint> b_index                   : register(u1);
-globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction    : register(u2);
+globallycoherent RWStructuredBuffer<uint> b_scanBump                : register(u2);
+globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction    : register(u3);
 
 groupshared uint g_broadcast;
 
 inline void AcquirePartitionIndex(uint gtid)
 {
     if (!gtid)
-        InterlockedAdd(b_index[0], 1, g_broadcast);
+        InterlockedAdd(b_scanBump[0], 1, g_broadcast);
 }
 
-//use the exact thread that performed the scan on the last element
-//to elide an extra barrier
 inline void DeviceBroadcast(uint gtid, uint partIndex)
 {
-    if (gtid == BLOCK_DIM / WaveGetLaneCount() - 1)
+    if (!gtid)
     {
-        InterlockedAdd(b_threadBlockReduction[partIndex],
-            (partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | g_reduction[gtid] << 2);
+        uint t;
+        InterlockedExchange(b_threadBlockReduction[partIndex],
+            (partIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) |
+            g_reduction[BLOCK_DIM / WaveGetLaneCount() - 1] << 2, t);
     }
 }
 
@@ -56,8 +56,10 @@ inline void LookbackSingle(uint partIndex)
             prevReduction += flagPayload >> 2;
             if ((flagPayload & FLAG_MASK) == FLAG_INCLUSIVE)
             {
+                uint t;
+                InterlockedExchange(b_threadBlockReduction[partIndex], FLAG_INCLUSIVE |
+                    prevReduction + g_reduction[BLOCK_DIM / WaveGetLaneCount() - 1] << 2, t);
                 g_broadcast = prevReduction;
-                InterlockedAdd(b_threadBlockReduction[partIndex], 1 | (prevReduction << 2));
                 break;
             }
             else
@@ -106,8 +108,10 @@ inline void LookbackWarp(uint partIndex)
                                 
                 if (WaveGetLaneIndex() == 0)
                 {
+                    uint t;
+                    InterlockedExchange(b_threadBlockReduction[partIndex], FLAG_INCLUSIVE |
+                        prevReduction + g_reduction[BLOCK_DIM / WaveGetLaneCount() - 1] << 2, t);
                     g_broadcast = prevReduction;
-                    InterlockedAdd(b_threadBlockReduction[partIndex], 1 | (prevReduction << 2));
                 }
                 break;
             }
@@ -129,7 +133,7 @@ void InitChainedScan(uint3 id : SV_DispatchThreadID)
         b_threadBlockReduction[i] = 0;
     
     if (!id.x)
-        b_index[id.x] = 0;
+        b_scanBump[id.x] = 0;
 }
 
 [numthreads(BLOCK_DIM, 1, 1)]
@@ -139,18 +143,16 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     const uint partitionIndex = g_broadcast;
 
+    t_scan t_s;
     if (partitionIndex < e_threadBlocks - 1)
-        ScanExclusiveFull(gtid.x, partitionIndex);
+        ScanExclusiveFull(gtid.x, partitionIndex, t_s);
     
     if (partitionIndex == e_threadBlocks - 1)
-        ScanExclusivePartial(gtid.x, partitionIndex);
+        ScanExclusivePartial(gtid.x, partitionIndex, t_s);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x);
-    
-    if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x);
+    SpineScan(gtid.x);
+    GroupMemoryBarrierWithGroupSync();
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
@@ -162,10 +164,10 @@ void ChainedScanDecoupledLookbackExclusive(uint3 gtid : SV_GroupThreadID)
         (gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0);
     
     if (partitionIndex < e_threadBlocks - 1)
-        DownSweepFull(gtid.x, partitionIndex, prevReduction);
+        PropagateFull(gtid.x, partitionIndex, prevReduction, t_s);
     
     if (partitionIndex == e_threadBlocks - 1)
-        DownSweepPartial(gtid.x, partitionIndex, prevReduction);
+        PropagatePartial(gtid.x, partitionIndex, prevReduction, t_s);
 }
 
 [numthreads(BLOCK_DIM, 1, 1)]
@@ -175,18 +177,16 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
     GroupMemoryBarrierWithGroupSync();
     const uint partitionIndex = g_broadcast;
 
+    t_scan t_s;
     if (partitionIndex < e_threadBlocks - 1)
-        ScanInclusiveFull(gtid.x, partitionIndex);
+        ScanInclusiveFull(gtid.x, partitionIndex, t_s);
     
     if (partitionIndex == e_threadBlocks - 1)
-        ScanInclusivePartial(gtid.x, partitionIndex);
+        ScanInclusivePartial(gtid.x, partitionIndex, t_s);
     GroupMemoryBarrierWithGroupSync();
     
-    if (WaveGetLaneCount() >= 16)
-        LocalScanInclusiveWGE16(gtid.x);
-    
-    if (WaveGetLaneCount() < 16)
-        LocalScanInclusiveWLT16(gtid.x);
+    SpineScan(gtid.x);
+    GroupMemoryBarrierWithGroupSync();
     
     DeviceBroadcast(gtid.x, partitionIndex);
     
@@ -198,8 +198,8 @@ void ChainedScanDecoupledLookbackInclusive(uint3 gtid : SV_GroupThreadID)
         (gtid.x >= WaveGetLaneCount() ? g_reduction[getWaveIndex(gtid.x) - 1] : 0);
     
     if (partitionIndex < e_threadBlocks - 1)
-        DownSweepFull(gtid.x, partitionIndex, prevReduction);
+        PropagateFull(gtid.x, partitionIndex, prevReduction, t_s);
     
     if (partitionIndex == e_threadBlocks - 1)
-        DownSweepPartial(gtid.x, partitionIndex, prevReduction);
+        PropagatePartial(gtid.x, partitionIndex, prevReduction, t_s);
 }

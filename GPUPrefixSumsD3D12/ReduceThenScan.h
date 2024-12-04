@@ -2,7 +2,7 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -12,21 +12,18 @@
 #include "GPUPrefixSumBase.h"
 #include "RTSKernels.h"
 
-class ReduceThenScan : public GPUPrefixSumBase
-{
+class ReduceThenScan : public GPUPrefixSumBase {
     RTSKernels::Reduce* m_rtsReduce;
     RTSKernels::Scan* m_rtsScan;
-    RTSKernels::DownSweepInclusive* m_rtsDownSweepInclusive;
-    RTSKernels::DownSweepExclusive* m_rtsDownSweepExclusive;
+    RTSKernels::PropagateInclusive* m_rtsPropagateInclusive;
+    RTSKernels::PropagateExclusive* m_rtsPropagateExclusive;
 
-public:
-    ReduceThenScan(
-        winrt::com_ptr<ID3D12Device> _device,
-        GPUPrefixSums::DeviceInfo _deviceInfo);
+   public:
+    ReduceThenScan(winrt::com_ptr<ID3D12Device> _device, GPUPrefixSums::DeviceInfo _deviceInfo);
 
     ~ReduceThenScan();
 
-protected:
+   protected:
     void InitComputeShaders() override;
 
     void DisposeBuffers() override;

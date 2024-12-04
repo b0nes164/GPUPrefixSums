@@ -2,7 +2,7 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 4/4/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -15,8 +15,7 @@
 
 //Enough differences that instead of inheriting from base class,
 //a seperate class is created. There is probably a more elegant way to do this
-class Survey
-{
+class Survey {
     const uint32_t k_maxReadBack = 1 << 16;
     const uint32_t k_maxWaveSize = 128;
     const uint32_t k_groupSize = 256;
@@ -82,7 +81,7 @@ class Survey
     SurveyKernels::BlockSklanskyIntrinsicInclusive* m_blockSklanskyIntrinsicInclusive;
     SurveyKernels::BlockSklanskyIntrinsicInclusiveAlt* m_blockSklanskyIntrinsicInclusiveAlt;
     SurveyKernels::BlockSklanskyIntrinsicExclusive* m_blockSklanskyIntrinsicExclusive;
-    
+
     SurveyKernels::BlockRakingReduceIntrinsicInclusive* m_blockRakingReduceIntrinsicInclusive;
     SurveyKernels::BlockRakingReduceIntrinsicExclusive* m_blockRakingReduceIntrinsicExclusive;
 
@@ -97,10 +96,8 @@ class Survey
     SurveyKernels::TrueBlockInclusiveScan* m_trueBlockInclusiveScan;
     SurveyKernels::TrueBlockExclusiveScan* m_trueBlockExclusiveScan;
 
-public:
-    Survey(
-        winrt::com_ptr<ID3D12Device> _device,
-        const GPUPrefixSums::DeviceInfo _deviceInfo);
+   public:
+    Survey(winrt::com_ptr<ID3D12Device> _device, const GPUPrefixSums::DeviceInfo _deviceInfo);
 
     ~Survey();
 
@@ -159,7 +156,7 @@ public:
 
     void TestAll();
 
-private:
+   private:
     void InitUtilityShaders();
 
     void InitComputeShaders();
@@ -176,43 +173,23 @@ private:
 
     void ExecuteCommandList();
 
-    bool ValidateInclusive(
-        const char* scanName,
-        uint32_t testSize,
-        bool shouldPrint);
+    bool ValidateInclusive(const char* scanName, uint32_t testSize, bool shouldPrint);
 
-    bool ValidateExclusive(
-        const char* scanName,
-        uint32_t testSize,
-        bool shouldPrint);
+    bool ValidateExclusive(const char* scanName, uint32_t testSize, bool shouldPrint);
 
     uint32_t ReadBackValidationInfo();
 
     void ReadBackOutput();
 
-    bool TestScanInclusive(
-        const char* scanName,
-        SurveyKernelBase* scan,
-        const bool& shouldPrint,
-        const bool& shouldPrintValidation);
+    bool TestScanInclusive(const char* scanName, SurveyKernelBase* scan, const bool& shouldPrint,
+                           const bool& shouldPrintValidation);
 
-    bool TestScanInclusive(
-        const char* scanName,
-        SurveyKernelBase* scan,
-        const uint32_t& size,
-        const bool& shouldPrint,
-        const bool& shouldPrintValidation);
+    bool TestScanInclusive(const char* scanName, SurveyKernelBase* scan, const uint32_t& size,
+                           const bool& shouldPrint, const bool& shouldPrintValidation);
 
-    bool TestScanExclusive(
-        const char* scanName,
-        SurveyKernelBase* scan,
-        const bool& shouldPrint,
-        const bool& shouldPrintValidation);
+    bool TestScanExclusive(const char* scanName, SurveyKernelBase* scan, const bool& shouldPrint,
+                           const bool& shouldPrintValidation);
 
-    bool TestScanExclusive(
-        const char* scanName,
-        SurveyKernelBase* scan,
-        const uint32_t& size,
-        const bool& shouldPrint,
-        const bool& shouldPrintValidation);
+    bool TestScanExclusive(const char* scanName, SurveyKernelBase* scan, const uint32_t& size,
+                           const bool& shouldPrint, const bool& shouldPrintValidation);
 };

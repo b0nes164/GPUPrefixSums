@@ -2,7 +2,7 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/5/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
@@ -20,14 +20,17 @@ cbuffer cbPrefixSum : register(b0)
     uint e_fullDispatches;
 };
 
-RWStructuredBuffer<uint4> b_scan : register(u0);
-
-groupshared uint4 g_shared[UINT4_PART_SIZE];
+RWStructuredBuffer<uint4> b_scanIn : register(u0);
+RWStructuredBuffer<uint4> b_scanOut : register(u1);
 groupshared uint g_reduction[BLOCK_DIM / MIN_WAVE_SIZE];
+struct t_scan
+{
+    uint4 t[UINT4_PER_THREAD];
+};
 
 inline uint getWaveIndex(uint _gtid)
 {
-    return _gtid / WaveGetLaneCount();
+    return _gtid / WaveGetLaneCount();  //CAUTION, 1D WORKGROUP ONLY!
 }
 
 inline bool isPartialDispatch()
@@ -42,9 +45,9 @@ inline uint flattenGid(uint3 gid)
         gid.x + gid.y * MAX_DISPATCH_DIM;
 }
 
-inline uint PartStart(uint _partIndex)
+inline uint PartStart(uint partIndex)
 {
-    return _partIndex * UINT4_PART_SIZE;
+    return partIndex * UINT4_PART_SIZE;
 }
 
 inline uint WavePartSize()
@@ -52,9 +55,9 @@ inline uint WavePartSize()
     return UINT4_PER_THREAD * WaveGetLaneCount();
 }
 
-inline uint WavePartStart(uint _gtid)
+inline uint WavePartStart(uint gtid)
 {
-    return getWaveIndex(_gtid) * WavePartSize();
+    return getWaveIndex(gtid) * WavePartSize();
 }
 
 inline uint4 SetXAddYZW(uint t, uint4 val)
@@ -63,189 +66,176 @@ inline uint4 SetXAddYZW(uint t, uint4 val)
 }
 
 //read in and scan
-inline void ScanExclusiveFull(uint gtid, uint partIndex)
+inline void ScanExclusiveFull(uint gtid, uint partIndex, inout t_scan t_s)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
     const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
     uint waveReduction = 0;
     
     [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
         k < UINT4_PER_THREAD;
         i += WaveGetLaneCount(), ++k)
     {
-        uint4 t = b_scan[i + PartStart(partIndex)];
-
-        uint t2 = t.x;
-        t.x += t.y;
-        t.y = t2;
-
-        t2 = t.x;
-        t.x += t.z;
-        t.z = t2;
-
-        t2 = t.x;
-        t.x += t.w;
-        t.w = t2;
+        t_s.t[k] = b_scanIn[i];
         
-        const uint t3 = WaveReadLaneAt(t.x + WavePrefixSum(t.x), circularShift);
-        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + waveReduction, t);
-        waveReduction += WaveReadLaneAt(t3, 0);
+        uint t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].y;
+        t_s.t[k].y = t0;
+
+        t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].z;
+        t_s.t[k].z = t0;
+
+        t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].w;
+        t_s.t[k].w = t0;
+        
+        const uint t1 = WaveReadLaneAt(t_s.t[k].x + WavePrefixSum(t_s.t[k].x), circularShift);
+        t_s.t[k] = SetXAddYZW((WaveGetLaneIndex() ? t1 : 0) + waveReduction, t_s.t[k]);
+        waveReduction += WaveReadLaneAt(t1, 0);
     }
     
     if (!WaveGetLaneIndex())
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-inline void ScanExclusivePartial(uint gtid, uint partIndex)
-{
-    const uint laneMask = WaveGetLaneCount() - 1;
-    const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
-    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
-    uint waveReduction = 0;
-    
-    [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
-        k < UINT4_PER_THREAD;
-        i += WaveGetLaneCount(), ++k)
-    {
-        uint4 t = i < finalPartSize ? b_scan[i + PartStart(partIndex)] : 0;
-
-        uint t2 = t.x;
-        t.x += t.y;
-        t.y = t2;
-
-        t2 = t.x;
-        t.x += t.z;
-        t.z = t2;
-
-        t2 = t.x;
-        t.x += t.w;
-        t.w = t2;
-        
-        const uint t3 = WaveReadLaneAt(t.x + WavePrefixSum(t.x), circularShift);
-        g_shared[i] = SetXAddYZW((WaveGetLaneIndex() ? t3 : 0) + waveReduction, t);
-        waveReduction += WaveReadLaneAt(t3, 0);
-    }
-    
-    if (!WaveGetLaneIndex())
-        g_reduction[getWaveIndex(gtid)] = waveReduction;
-}
-
-inline void ScanInclusiveFull(uint gtid, uint partIndex)
+inline void ScanExclusivePartial(uint gtid, uint partIndex, inout t_scan t_s)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
     const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
     uint waveReduction = 0;
     
     [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
         k < UINT4_PER_THREAD;
         i += WaveGetLaneCount(), ++k)
     {
-        uint4 t = b_scan[i + PartStart(partIndex)];
-        t.y += t.x;
-        t.z += t.y;
-        t.w += t.z;
+        t_s.t[k] = i < e_vectorizedSize ? b_scanIn[i] : 0;
         
-        const uint t2 = WaveReadLaneAt(t.w + WavePrefixSum(t.w), circularShift);
-        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + waveReduction;
-        waveReduction += WaveReadLaneAt(t2, 0);
+        uint t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].y;
+        t_s.t[k].y = t0;
+
+        t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].z;
+        t_s.t[k].z = t0;
+
+        t0 = t_s.t[k].x;
+        t_s.t[k].x += t_s.t[k].w;
+        t_s.t[k].w = t0;
+        
+        const uint t1 = WaveReadLaneAt(t_s.t[k].x + WavePrefixSum(t_s.t[k].x), circularShift);
+        t_s.t[k] = SetXAddYZW((WaveGetLaneIndex() ? t1 : 0) + waveReduction, t_s.t[k]);
+        waveReduction += WaveReadLaneAt(t1, 0);
     }
     
     if (!WaveGetLaneIndex())
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-inline void ScanInclusivePartial(uint gtid, uint partIndex)
+inline void ScanInclusiveFull(uint gtid, uint partIndex, inout t_scan t_s)
 {
     const uint laneMask = WaveGetLaneCount() - 1;
     const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
-    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
     uint waveReduction = 0;
     
     [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
         k < UINT4_PER_THREAD;
         i += WaveGetLaneCount(), ++k)
     {
-        uint4 t = i < finalPartSize ? b_scan[i + PartStart(partIndex)] : 0;
-        t.y += t.x;
-        t.z += t.y;
-        t.w += t.z;
+        t_s.t[k] = b_scanIn[i];
+        t_s.t[k].y += t_s.t[k].x;
+        t_s.t[k].z += t_s.t[k].y;
+        t_s.t[k].w += t_s.t[k].z;
         
-        const uint t2 = WaveReadLaneAt(t.w + WavePrefixSum(t.w), circularShift);
-        g_shared[i] = t + (WaveGetLaneIndex() ? t2 : 0) + waveReduction;
-        waveReduction += WaveReadLaneAt(t2, 0);
+        const uint t = WaveReadLaneAt(t_s.t[k].w + WavePrefixSum(t_s.t[k].w), circularShift);
+        t_s.t[k] += (WaveGetLaneIndex() ? t : 0) + waveReduction;
+        waveReduction += WaveReadLaneAt(t, 0);
     }
     
     if (!WaveGetLaneIndex())
         g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-//Reduce the wave reductions
-inline void LocalScanInclusiveWGE16(uint gtid)
+inline void ScanInclusivePartial(uint gtid, uint partIndex, inout t_scan t_s)
 {
-    if (gtid < BLOCK_DIM / WaveGetLaneCount())
-        g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
+    const uint laneMask = WaveGetLaneCount() - 1;
+    const uint circularShift = WaveGetLaneIndex() + laneMask & laneMask;
+    uint waveReduction = 0;
+    
+    [unroll]
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
+        k < UINT4_PER_THREAD;
+        i += WaveGetLaneCount(), ++k)
+    {
+        t_s.t[k] = i < e_vectorizedSize ? b_scanIn[i] : 0;
+        t_s.t[k].y += t_s.t[k].x;
+        t_s.t[k].z += t_s.t[k].y;
+        t_s.t[k].w += t_s.t[k].z;
+        
+        const uint t = WaveReadLaneAt(t_s.t[k].w + WavePrefixSum(t_s.t[k].w), circularShift);
+        t_s.t[k] += (WaveGetLaneIndex() ? t : 0) + waveReduction;
+        waveReduction += WaveReadLaneAt(t, 0);
+    }
+    
+    if (!WaveGetLaneIndex())
+        g_reduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-inline void LocalScanInclusiveWLT16(uint gtid)
+// Non-divergent wave size agnostic scan across wave reductions
+inline void SpineScan(uint gtid)
 {
-    const uint scanSize = BLOCK_DIM / WaveGetLaneCount();
-    if (gtid < scanSize)
-        g_reduction[gtid] += WavePrefixSum(g_reduction[gtid]);
-    GroupMemoryBarrierWithGroupSync();
-        
     const uint laneLog = countbits(WaveGetLaneCount() - 1);
-    uint offset = laneLog;
-    uint j = WaveGetLaneCount();
-    for (; j < (scanSize >> 1); j <<= laneLog)
+    const uint spineSize = BLOCK_DIM >> laneLog;
+    const uint alignedSize = 1 << (countbits(spineSize - 1) + laneLog - 1) / laneLog * laneLog;
+    uint offset = 0;
+    for (uint j = WaveGetLaneCount(); j <= alignedSize; j <<= laneLog)
     {
-        if (gtid < (scanSize >> offset))
-        {
-            g_reduction[((gtid + 1) << offset) - 1] +=
-                WavePrefixSum(g_reduction[((gtid + 1) << offset) - 1]);
-        }
+        const uint t0 = j != WaveGetLaneCount() ? 1 : 0;
+        const uint i0 = (gtid + t0 << offset) - t0;
+        const bool pred0 = i0 < spineSize;
+        const uint t1 = pred0 ? g_reduction[i0] : 0;
+        const uint t2 = t1 + WavePrefixSum(t1);
+        if (pred0)
+            g_reduction[i0] = t2;
         GroupMemoryBarrierWithGroupSync();
-            
-        if ((gtid & ((j << laneLog) - 1)) >= j && (gtid + 1) & (j - 1))
+        
+        if (j != WaveGetLaneCount())
         {
-            g_reduction[gtid] +=
-                WaveReadLaneAt(g_reduction[((gtid >> offset) << offset) - 1], 0);
+            const uint rshift = j >> laneLog;
+            const uint i1 = gtid + rshift;
+            if ((i1 & j - 1) >= rshift)
+            {
+                const bool pred1 = i1 < spineSize;
+                const uint t3 = pred1 ? g_reduction[((i1 >> offset) << offset) - 1] : 0;
+                if (pred1 && (i1 + 1 & rshift - 1) != 0)
+                    g_reduction[i1] += t3;
+            }
         }
         offset += laneLog;
-    }
-    GroupMemoryBarrierWithGroupSync();
-        
-    //If scanSize is not a power of lanecount
-    const uint index = gtid + j;
-    if (index < scanSize)
-    {
-        g_reduction[index] +=
-            WaveReadLaneAt(g_reduction[((index >> offset) << offset) - 1], 0);
     }
 }
 
 //Pass in previous reductions, and write out
-inline void DownSweepFull(uint gtid, uint partIndex, uint prevReduction)
+inline void PropagateFull(uint gtid, uint partIndex, uint prevReduction, t_scan t_s)
 {
     [unroll]
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
         k < UINT4_PER_THREAD;
         i += WaveGetLaneCount(), ++k)
     {
-        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
+        b_scanOut[i] = t_s.t[k] + prevReduction;
     }
 }
 
-inline void DownSweepPartial(uint gtid, uint partIndex, uint prevReduction)
+inline void PropagatePartial(uint gtid, uint partIndex, uint prevReduction, t_scan t_s)
 {
-    const uint finalPartSize = e_vectorizedSize - PartStart(partIndex);
-    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid), k = 0;
-        k < UINT4_PER_THREAD && i < finalPartSize;
+    for (uint i = WaveGetLaneIndex() + WavePartStart(gtid) + PartStart(partIndex), k = 0;
+        k < UINT4_PER_THREAD && i < e_vectorizedSize;
         i += WaveGetLaneCount(), ++k)
     {
-        b_scan[i + PartStart(partIndex)] = g_shared[i] + prevReduction;
+        b_scanOut[i] = t_s.t[k] + prevReduction;
     }
 }

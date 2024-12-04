@@ -2,17 +2,15 @@
  * GPUPrefixSums
  *
  * SPDX-License-Identifier: MIT
- * Copyright Thomas Smith 3/6/2024
+ * Copyright Thomas Smith 12/2/2024
  * https://github.com/b0nes164/GPUPrefixSums
  *
  ******************************************************************************/
 #pragma once
 #include "pch.h"
 
-namespace GPUPrefixSums
-{
-    struct DeviceInfo
-    {
+namespace GPUPrefixSums {
+    struct DeviceInfo {
         std::wstring Description;
         std::wstring SupportedShaderModel;
         uint32_t SIMDWidth;
@@ -24,4 +22,4 @@ namespace GPUPrefixSums
         bool SupportsReduceThenScan;
         bool SupportsChainedScanDecoupledLookback;
     };
-}
+}  // namespace GPUPrefixSums
