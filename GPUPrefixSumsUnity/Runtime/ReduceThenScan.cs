@@ -31,8 +31,8 @@ namespace GPUPrefixSums.Runtime
             {
                 m_kernelReduce = m_cs.FindKernel("Reduce");
                 m_kernelScan = m_cs.FindKernel("Scan");
-                m_kernelInclusive = m_cs.FindKernel("DownsweepInclusive");
-                m_kernelExclusive = m_cs.FindKernel("DownsweepExclusive");
+                m_kernelInclusive = m_cs.FindKernel("PropagateInclusive");
+                m_kernelExclusive = m_cs.FindKernel("PropagateExclusive");
             }
 
             m_isValid = m_kernelReduce >= 0 &&
@@ -59,6 +59,12 @@ namespace GPUPrefixSums.Runtime
                 m_allocatedSize < k_maxSize &&
                 m_allocatedSize > k_minSize);
             AllocateResources(m_allocatedSize, ref tempBuffer0);
+
+            LocalKeyword m_vulkanKeyword = new LocalKeyword(m_cs, "VULKAN");
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan)
+                m_cs.EnableKeyword(m_vulkanKeyword);
+            else
+                m_cs.DisableKeyword(m_vulkanKeyword);
         }
 
         private void AllocateResources(
@@ -70,35 +76,41 @@ namespace GPUPrefixSums.Runtime
         }
 
         private void SetRootParameters(
-            ComputeBuffer _scanBuffer,
+            ComputeBuffer _scanInBuffer,
+            ComputeBuffer _scanOutBuffer,
             ComputeBuffer _threadBlockReductionBuffer)
         {
-            m_cs.SetBuffer(m_kernelReduce, "b_scan", _scanBuffer);
+            m_cs.SetBuffer(m_kernelReduce, "b_scanIn", _scanInBuffer);
             m_cs.SetBuffer(m_kernelReduce, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
             m_cs.SetBuffer(m_kernelScan, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
-            m_cs.SetBuffer(m_kernelInclusive, "b_scan", _scanBuffer);
+            m_cs.SetBuffer(m_kernelInclusive, "b_scanIn", _scanInBuffer);
+            m_cs.SetBuffer(m_kernelInclusive, "b_scanOut", _scanOutBuffer);
             m_cs.SetBuffer(m_kernelInclusive, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
-            m_cs.SetBuffer(m_kernelExclusive, "b_scan", _scanBuffer);
+            m_cs.SetBuffer(m_kernelExclusive, "b_scanIn", _scanInBuffer);
+            m_cs.SetBuffer(m_kernelExclusive, "b_scanOut", _scanOutBuffer);
             m_cs.SetBuffer(m_kernelExclusive, "b_threadBlockReduction", _threadBlockReductionBuffer);
         }
 
         private void SetRootParameters(
             CommandBuffer _cmd,
-            ComputeBuffer _scanBuffer,
+            ComputeBuffer _scanInBuffer,
+            ComputeBuffer _scanOutBuffer,
             ComputeBuffer _threadBlockReductionBuffer)
         {
-            _cmd.SetComputeBufferParam(m_cs, m_kernelReduce, "b_scan", _scanBuffer);
+            _cmd.SetComputeBufferParam(m_cs, m_kernelReduce, "b_scanIn", _scanInBuffer);
             _cmd.SetComputeBufferParam(m_cs, m_kernelReduce, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
             _cmd.SetComputeBufferParam(m_cs, m_kernelScan, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
-            _cmd.SetComputeBufferParam(m_cs, m_kernelInclusive, "b_scan", _scanBuffer);
+            _cmd.SetComputeBufferParam(m_cs, m_kernelInclusive, "b_scanIn", _scanInBuffer);
+            _cmd.SetComputeBufferParam(m_cs, m_kernelInclusive, "b_scanOut", _scanOutBuffer);
             _cmd.SetComputeBufferParam(m_cs, m_kernelInclusive, "b_threadBlockReduction", _threadBlockReductionBuffer);
 
-            _cmd.SetComputeBufferParam(m_cs, m_kernelExclusive, "b_scan", _scanBuffer);
+            _cmd.SetComputeBufferParam(m_cs, m_kernelExclusive, "b_scanIn", _scanInBuffer);
+            _cmd.SetComputeBufferParam(m_cs, m_kernelExclusive, "b_scanOut", _scanOutBuffer);
             _cmd.SetComputeBufferParam(m_cs, m_kernelExclusive, "b_threadBlockReduction", _threadBlockReductionBuffer);
         }
 
@@ -143,18 +155,21 @@ namespace GPUPrefixSums.Runtime
 
         public void PrefixSumInclusive(
             int size,
-            ComputeBuffer toPrefixSum,
+            ComputeBuffer prefixSumIn,
+            ComputeBuffer prefixSumOut,
             ComputeBuffer tempBuffer0)
         {
             Assert.IsTrue(
                 m_isValid &&
-                IsAligned(toPrefixSum.stride) &&
+                IsAligned(prefixSumIn.stride) &&
+                IsAligned(prefixSumOut.stride) &&
                 size < m_allocatedSize &&
                 size > k_minSize);
 
             int threadBlocks = DivRoundUp(AlignFour(size), k_partitionSize);
             SetRootParameters(
-                toPrefixSum,
+                prefixSumIn,
+                prefixSumOut,
                 tempBuffer0);
 
             m_cs.SetInt("e_vectorizedSize", VectorizedSize(size));
@@ -170,18 +185,21 @@ namespace GPUPrefixSums.Runtime
 
         public void PrefixSumExclusive(
             int size,
-            ComputeBuffer toPrefixSum,
+            ComputeBuffer prefixSumIn,
+            ComputeBuffer prefixSumOut,
             ComputeBuffer tempBuffer0)
         {
             Assert.IsTrue(
                 m_isValid &&
-                IsAligned(toPrefixSum.stride) &&
+                IsAligned(prefixSumIn.stride) &&
+                IsAligned(prefixSumOut.stride) &&
                 size < m_allocatedSize &&
                 size > k_minSize);
 
             int threadBlocks = DivRoundUp(AlignFour(size), k_partitionSize);
             SetRootParameters(
-                toPrefixSum,
+                prefixSumIn,
+                prefixSumOut,
                 tempBuffer0);
 
             m_cs.SetInt("e_vectorizedSize", VectorizedSize(size));
@@ -198,19 +216,23 @@ namespace GPUPrefixSums.Runtime
         public void PrefixSumInclusive(
             CommandBuffer cmd,
             int size,
-            ComputeBuffer toPrefixSum,
+            ComputeBuffer prefixSumIn,
+            ComputeBuffer prefixSumOut,
             ComputeBuffer tempBuffer0)
         {
             Assert.IsTrue(
                 m_isValid &&
-                IsAligned(toPrefixSum.stride) &&
+                IsAligned(prefixSumIn.stride) &&
+                IsAligned(prefixSumOut.stride) &&
                 size < m_allocatedSize &&
                 size > k_minSize);
 
+            int vectorizedSize = VectorizedSize(size);
             int threadBlocks = DivRoundUp(AlignFour(size), k_partitionSize);
             SetRootParameters(
                 cmd,
-                toPrefixSum,
+                prefixSumIn,
+                prefixSumOut,
                 tempBuffer0);
 
             cmd.SetComputeIntParam(m_cs, "e_vectorizedSize", VectorizedSize(size));
@@ -226,19 +248,23 @@ namespace GPUPrefixSums.Runtime
         public void PrefixSumExclusive(
             CommandBuffer cmd,
             int size,
-            ComputeBuffer toPrefixSum,
+            ComputeBuffer prefixSumIn,
+            ComputeBuffer prefixSumOut,
             ComputeBuffer tempBuffer0)
         {
             Assert.IsTrue(
                 m_isValid &&
-                IsAligned(toPrefixSum.stride) &&
+                IsAligned(prefixSumIn.stride) &&
+                IsAligned(prefixSumOut.stride) &&
                 size < m_allocatedSize &&
                 size > k_minSize);
 
+            int vectorizedSize = VectorizedSize(size);
             int threadBlocks = DivRoundUp(AlignFour(size), k_partitionSize);
             SetRootParameters(
                 cmd,
-                toPrefixSum,
+                prefixSumIn,
+                prefixSumOut,
                 tempBuffer0);
 
             cmd.SetComputeIntParam(m_cs, "e_vectorizedSize", VectorizedSize(size));

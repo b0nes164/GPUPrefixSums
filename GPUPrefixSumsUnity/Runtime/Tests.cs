@@ -27,7 +27,8 @@ namespace GPUPrefixSums.Runtime
         private const int k_partitionSize = 3072;
         private const int k_maxDispatch = 65535;
 
-        private ComputeBuffer scan;
+        private ComputeBuffer scanIn;
+        private ComputeBuffer scanOut;
         private ComputeBuffer scanValidation;
         private ComputeBuffer threadBlockReduction;
         private ComputeBuffer index;
@@ -91,7 +92,8 @@ namespace GPUPrefixSums.Runtime
         {
             m_cmd = new CommandBuffer();
 
-            scan = new ComputeBuffer(1 << 26, sizeof(uint) * 4);
+            scanIn = new ComputeBuffer(1 << 26, sizeof(uint) * 4);
+            scanOut = new ComputeBuffer(1 << 26, sizeof(uint) * 4);
             errCount = new ComputeBuffer(1, sizeof(uint));
             scanValidation = new ComputeBuffer(1 << 18, sizeof(uint) * 4);
         }
@@ -119,13 +121,13 @@ namespace GPUPrefixSums.Runtime
 
             if (isRandom)
             {
-                m_util.SetBuffer(m_kernelInitRandom, "b_scan", scan);
+                m_util.SetBuffer(m_kernelInitRandom, "b_scan", scanIn);
                 m_util.SetBuffer(m_kernelInitRandom, "b_scanValidation", scanValidation);
                 m_util.Dispatch(m_kernelInitRandom, 256, 1, 1);
             }
             else
             {
-                m_util.SetBuffer(m_kernelInitOne, "b_scan", scan);
+                m_util.SetBuffer(m_kernelInitOne, "b_scan", scanIn);
                 m_util.Dispatch(m_kernelInitOne, 256, 1, 1);
             }
         }
@@ -140,14 +142,14 @@ namespace GPUPrefixSums.Runtime
                 if (isInclusive)
                 {
                     m_util.SetBuffer(m_kernelValidateRandomInclusive, "b_errorCount", errCount);
-                    m_util.SetBuffer(m_kernelValidateRandomInclusive, "b_scan", scan);
+                    m_util.SetBuffer(m_kernelValidateRandomInclusive, "b_scan", scanOut);
                     m_util.SetBuffer(m_kernelValidateRandomInclusive, "b_scanValidation", scanValidation);
                     m_util.Dispatch(m_kernelValidateRandomInclusive, 1, 1, 1);
                 }
                 else
                 {
                     m_util.SetBuffer(m_kernelValidateRandomExclusive, "b_errorCount", errCount);
-                    m_util.SetBuffer(m_kernelValidateRandomExclusive, "b_scan", scan);
+                    m_util.SetBuffer(m_kernelValidateRandomExclusive, "b_scan", scanOut);
                     m_util.SetBuffer(m_kernelValidateRandomExclusive, "b_scanValidation", scanValidation);
                     m_util.Dispatch(m_kernelValidateRandomExclusive, 1, 1, 1);
                 }
@@ -157,13 +159,13 @@ namespace GPUPrefixSums.Runtime
                 if (isInclusive)
                 {
                     m_util.SetBuffer(m_kernelValidateOneInclusive, "b_errorCount", errCount);
-                    m_util.SetBuffer(m_kernelValidateOneInclusive, "b_scan", scan);
+                    m_util.SetBuffer(m_kernelValidateOneInclusive, "b_scan", scanOut);
                     m_util.Dispatch(m_kernelValidateOneInclusive, 256, 1, 1);
                 }
                 else
                 {
                     m_util.SetBuffer(m_kernelValidateOneExclusive, "b_errorCount", errCount);
-                    m_util.SetBuffer(m_kernelValidateOneExclusive, "b_scan", scan);
+                    m_util.SetBuffer(m_kernelValidateOneExclusive, "b_scan", scanOut);
                     m_util.Dispatch(m_kernelValidateOneExclusive, 256, 1, 1);
                 }
             }
@@ -190,7 +192,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, false);
             m_csdldf.PrefixSumInclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             return PostScan(false, true, false);
@@ -201,7 +204,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, false);
             m_csdldf.PrefixSumExclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             return PostScan(false, false, false);
@@ -212,7 +216,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, true);
             m_csdldf.PrefixSumInclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             return PostScan(true, true, false);
@@ -223,7 +228,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, true);
             m_csdldf.PrefixSumExclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             return PostScan(true, false, false);
@@ -236,7 +242,8 @@ namespace GPUPrefixSums.Runtime
             m_csdldf.PrefixSumInclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             Graphics.ExecuteCommandBuffer(m_cmd);
@@ -250,7 +257,8 @@ namespace GPUPrefixSums.Runtime
             m_csdldf.PrefixSumExclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             Graphics.ExecuteCommandBuffer(m_cmd);
@@ -264,7 +272,8 @@ namespace GPUPrefixSums.Runtime
             m_csdldf.PrefixSumInclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             Graphics.ExecuteCommandBuffer(m_cmd);
@@ -278,7 +287,8 @@ namespace GPUPrefixSums.Runtime
             m_csdldf.PrefixSumExclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction,
                 index);
             Graphics.ExecuteCommandBuffer(m_cmd);
@@ -290,7 +300,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, false);
             m_rts.PrefixSumInclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             return PostScan(false, true, false);
         }
@@ -300,7 +311,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, false);
             m_rts.PrefixSumExclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             return PostScan(false, false, false);
         }
@@ -310,7 +322,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, true);
             m_rts.PrefixSumInclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             return PostScan(true, true, false);
         }
@@ -320,7 +333,8 @@ namespace GPUPrefixSums.Runtime
             PreScan(testSize, true);
             m_rts.PrefixSumExclusive(
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             return PostScan(true, false, false);
         }
@@ -332,7 +346,8 @@ namespace GPUPrefixSums.Runtime
             m_rts.PrefixSumInclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             Graphics.ExecuteCommandBuffer(m_cmd);
             return PostScan(false, true, false);
@@ -345,7 +360,8 @@ namespace GPUPrefixSums.Runtime
             m_rts.PrefixSumExclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             Graphics.ExecuteCommandBuffer(m_cmd);
             return PostScan(false, false, false);
@@ -358,7 +374,8 @@ namespace GPUPrefixSums.Runtime
             m_rts.PrefixSumInclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             Graphics.ExecuteCommandBuffer(m_cmd);
             return PostScan(true, true, false);
@@ -371,7 +388,8 @@ namespace GPUPrefixSums.Runtime
             m_rts.PrefixSumExclusive(
                 m_cmd,
                 testSize,
-                scan,
+                scanIn,
+                scanOut,
                 threadBlockReduction);
             Graphics.ExecuteCommandBuffer(m_cmd);
             return PostScan(true, false, false);
@@ -526,10 +544,10 @@ namespace GPUPrefixSums.Runtime
                 Debug.LogError(totalCSDLDFTestsPassed + " / " + totalExpected + " CSDLDF TEST FAILED");
 
             //Sanity check
-            /*uint[] sanity = new uint[scan.count];
-            scan.GetData(sanity);
+            /*uint[] sanity = new uint[scanIn.count];
+            scanIn.GetData(sanity);
 
-            for (int i = scan.count - 1024; i < scan.count; ++i)
+            for (int i = scanIn.count - 1024; i < scanIn.count; ++i)
                 Debug.Log(sanity[i]);*/
         }
 
@@ -671,10 +689,10 @@ namespace GPUPrefixSums.Runtime
                 Debug.LogError(totalRTSTestsPassed + " / " + totalExpected + " RTS TEST FAILED");
 
             //Sanity check
-            /*uint[] sanity = new uint[scan.count];
-            scan.GetData(sanity);
+            /*uint[] sanity = new uint[scanIn.count];
+            scanIn.GetData(sanity);
 
-            for (int i = scan.count - 1024; i < scan.count; ++i)
+            for (int i = scanIn.count - 1024; i < scanIn.count; ++i)
                 Debug.Log(sanity[i]);*/
         }
 
@@ -695,7 +713,8 @@ namespace GPUPrefixSums.Runtime
         }
         private void OnDestroy()
         {
-            scan?.Dispose();
+            scanIn?.Dispose();
+            scanOut?.Dispose();
             scanValidation?.Dispose();
             threadBlockReduction?.Dispose();
             index?.Dispose();
