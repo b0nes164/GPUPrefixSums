@@ -113,9 +113,10 @@ fn main(
     let spine_size = BLOCK_DIM >> lane_log;
     let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
     {   
-        var offset = 0u;
+        var offset0 = 0u;
+        var offset1 = 0u;
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-            let i0 = (threadid.x << offset) - select(0u, 1u, j != lane_count);
+            let i0 = ((threadid.x + offset0) << offset1) - offset0;
             let pred0 = i0 < spine_size;
             let t0 = subgroupInclusiveAdd(select(vec4(0u, 0u, 0u, 0u), wg_reduce[i0], pred0));
             if(pred0){
@@ -128,13 +129,15 @@ fn main(
                 let i1 = threadid.x + rshift;
                 if ((i1 & (j - 1u)) >= rshift){
                     let pred1 = i1 < spine_size;
-                    let t1 = select(vec4(0u, 0u, 0u, 0u), wg_reduce[((i1 >> offset) << offset) - 1u], pred1);
+                    let t1 = select(vec4(0u, 0u, 0u, 0u), wg_reduce[((i1 >> offset1) << offset1) - 1u], pred1);
                     if(pred1 && ((i1 + 1u) & (rshift - 1u)) != 0u){
                         wg_reduce[i1] += t1;
                     }
                 }
+            } else {
+                offset0 += 1u;
             }
-            offset += lane_log;
+            offset1 += lane_log;
         }
     }   
     workgroupBarrier();
