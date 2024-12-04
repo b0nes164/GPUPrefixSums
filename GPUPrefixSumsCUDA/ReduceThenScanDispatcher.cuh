@@ -165,7 +165,7 @@ class ReduceThenScanDispatcher {
     void DispatchKernelsAgnostic(const uint32_t& vectorizedSize, const uint32_t& threadBlocks) {
         ReduceThenScan::Reduce<RTS_WARPS, UINT4_PER_THREAD>
             <<<threadBlocks, k_rtsThreads>>>(m_scan, m_threadBlockReduction, vectorizedSize);
-        ReduceThenScan::RootScan<32, 4><<<1, 1024>>>(m_threadBlockReduction, threadBlocks);
+        ReduceThenScan::SpineScan<32, 4><<<1, 1024>>>(m_threadBlockReduction, threadBlocks);
     }
 
     void DispatchKernelsExclusive(uint32_t size) {
@@ -173,7 +173,7 @@ class ReduceThenScanDispatcher {
         const uint32_t vectorizedSize = vectorizeAlignedSize(alignedSize);
         const uint32_t threadBlocks = divRoundUp(alignedSize, k_partitionSize);
         DispatchKernelsAgnostic(vectorizedSize, threadBlocks);
-        ReduceThenScan::DownSweepExclusive<RTS_WARPS, UINT4_PER_THREAD>
+        ReduceThenScan::PropagateExclusive<RTS_WARPS, UINT4_PER_THREAD>
             <<<threadBlocks, k_rtsThreads>>>(m_scan, m_threadBlockReduction, vectorizedSize);
     }
 
@@ -182,7 +182,7 @@ class ReduceThenScanDispatcher {
         const uint32_t vectorizedSize = vectorizeAlignedSize(alignedSize);
         const uint32_t threadBlocks = divRoundUp(alignedSize, k_partitionSize);
         DispatchKernelsAgnostic(vectorizedSize, threadBlocks);
-        ReduceThenScan::DownSweepInclusive<RTS_WARPS, UINT4_PER_THREAD>
+        ReduceThenScan::PropagateInclusive<RTS_WARPS, UINT4_PER_THREAD>
             <<<threadBlocks, k_rtsThreads>>>(m_scan, m_threadBlockReduction, vectorizedSize);
     }
 

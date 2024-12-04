@@ -54,7 +54,7 @@ namespace ReduceThenScan {
 
     // Unvectorized
     template <uint32_t WARPS, uint32_t PER_THREAD>
-    __global__ void RootScan(uint32_t* threadBlockReductions, const uint32_t threadBlocks) {
+    __global__ void SpineScan(uint32_t* threadBlockReductions, const uint32_t threadBlocks) {
         constexpr uint32_t PART_SIZE = WARPS * PER_THREAD * LANE_COUNT;
         __shared__ uint32_t s_red[WARPS];
 
@@ -104,19 +104,21 @@ namespace ReduceThenScan {
     }
 
     template <uint32_t WARPS, uint32_t PER_THREAD>
-    __global__ void DownSweepInclusive(uint32_t* scan, uint32_t* threadBlockReductions,
-                                       const uint32_t vectorizedSize) {
+    __device__ __forceinline__ void Propagate(
+        uint32_t* scan, uint32_t* threadBlockReductions, const uint32_t vectorizedSize,
+        void (*ScanVariantFull)(uint4*, uint32_t*, uint32_t*, const uint32_t),
+        void (*ScanVariantPartial)(uint4*, uint32_t*, uint32_t*, const uint32_t, const uint32_t)) {
         constexpr uint32_t PART_VEC_SIZE = WARPS * LANE_COUNT * PER_THREAD;
         __shared__ uint32_t s_warpReduction[WARPS];
 
         uint4 tScan[PER_THREAD];
         const uint32_t offset = WARP_INDEX * LANE_COUNT * PER_THREAD + blockIdx.x * PART_VEC_SIZE;
         if (blockIdx.x < gridDim.x - 1) {
-            ScanInclusiveFull<PER_THREAD>(tScan, scan, s_warpReduction, offset);
+            (*ScanVariantFull)(tScan, scan, s_warpReduction, offset);
         }
 
         if (blockIdx.x == gridDim.x - 1) {
-            ScanInclusivePartial<PER_THREAD>(tScan, scan, s_warpReduction, offset, vectorizedSize);
+            (*ScanVariantPartial)(tScan, scan, s_warpReduction, offset, vectorizedSize);
         }
         __syncthreads();
 
@@ -143,41 +145,18 @@ namespace ReduceThenScan {
     }
 
     template <uint32_t WARPS, uint32_t PER_THREAD>
-    __global__ void DownSweepExclusive(uint32_t* scan, uint32_t* threadBlockReductions,
+    __global__ void PropagateInclusive(uint32_t* scan, uint32_t* threadBlockReductions,
                                        const uint32_t vectorizedSize) {
-        constexpr uint32_t PART_VEC_SIZE = WARPS * LANE_COUNT * PER_THREAD;
-        __shared__ uint32_t s_warpReduction[WARPS];
+        Propagate<WARPS, PER_THREAD>(scan, threadBlockReductions, vectorizedSize,
+                                     ScanInclusiveFull<PER_THREAD>,
+                                     ScanInclusivePartial<PER_THREAD>);
+    }
 
-        uint4 tScan[PER_THREAD];
-        const uint32_t offset = WARP_INDEX * LANE_COUNT * PER_THREAD + blockIdx.x * PART_VEC_SIZE;
-        if (blockIdx.x < gridDim.x - 1) {
-            ScanExclusiveFull<PER_THREAD>(tScan, scan, s_warpReduction, offset);
-        }
-
-        if (blockIdx.x == gridDim.x - 1) {
-            ScanExclusivePartial<PER_THREAD>(tScan, scan, s_warpReduction, offset, vectorizedSize);
-        }
-        __syncthreads();
-
-        if (threadIdx.x < LANE_COUNT) {
-            const bool pred = threadIdx.x < WARPS;
-            const uint32_t t = InclusiveWarpScan(pred ? s_warpReduction[threadIdx.x] : 0);
-            if (pred) {
-                s_warpReduction[threadIdx.x] = t;
-            }
-        }
-        __syncthreads();
-
-        const uint32_t prevReduction =
-            (blockIdx.x ? threadBlockReductions[blockIdx.x - 1] : 0) +
-            (threadIdx.x >= LANE_COUNT ? s_warpReduction[WARP_INDEX - 1] : 0);
-
-        if (blockIdx.x < gridDim.x - 1) {
-            PropagateFull<PER_THREAD>(tScan, scan, prevReduction, offset);
-        }
-
-        if (blockIdx.x == gridDim.x - 1) {
-            PropagatePartial<PER_THREAD>(tScan, scan, prevReduction, offset, vectorizedSize);
-        }
+    template <uint32_t WARPS, uint32_t PER_THREAD>
+    __global__ void PropagateExclusive(uint32_t* scan, uint32_t* threadBlockReductions,
+                                       const uint32_t vectorizedSize) {
+        Propagate<WARPS, PER_THREAD>(scan, threadBlockReductions, vectorizedSize,
+                                     ScanExclusiveFull<PER_THREAD>,
+                                     ScanExclusivePartial<PER_THREAD>);
     }
 }  // namespace ReduceThenScan
