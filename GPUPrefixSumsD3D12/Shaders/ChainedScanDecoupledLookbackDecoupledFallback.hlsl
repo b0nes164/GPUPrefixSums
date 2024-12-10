@@ -80,12 +80,12 @@ inline void LocalReduce(uint gtid)
 
 inline void LookbackWithFallback(uint gtid, uint partIndex)
 {
+    uint lock = g_lock;
+    GroupMemoryBarrierWithGroupSync();
     uint prevReduction = 0;
     uint lookbackIndex = partIndex - 1;
-    while(g_lock == LOCKED)
+    while(lock == LOCKED)
     {
-        GroupMemoryBarrierWithGroupSync();
-        
         if (!gtid)
         {
             uint spinCount = 0;
@@ -126,7 +126,9 @@ inline void LookbackWithFallback(uint gtid, uint partIndex)
         GroupMemoryBarrierWithGroupSync();
 
         //Fallback if still locked
-        if(g_lock == LOCKED)
+        lock = g_lock;
+        GroupMemoryBarrierWithGroupSync();
+        if(lock == LOCKED)
         {
             const uint fallbackIndex = g_broadcast;
             WaveReduceFull(gtid, fallbackIndex);
@@ -154,6 +156,8 @@ inline void LookbackWithFallback(uint gtid, uint partIndex)
                     lookbackIndex--;
                 }
             }
+            GroupMemoryBarrierWithGroupSync();
+            lock = g_lock;
             GroupMemoryBarrierWithGroupSync();
         }
     }

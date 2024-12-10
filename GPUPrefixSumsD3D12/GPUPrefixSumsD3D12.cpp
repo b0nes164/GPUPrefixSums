@@ -111,8 +111,8 @@ winrt::com_ptr<ID3D12Device> InitDeviceWarp() {
 }
 
 int main() {
-    //winrt::com_ptr<ID3D12Device> device = InitDevice();
-    winrt::com_ptr<ID3D12Device> device = InitDeviceWarp(); //<- To test WARP, you will need NuGet package
+    winrt::com_ptr<ID3D12Device> device = InitDevice();
+    //winrt::com_ptr<ID3D12Device> device = InitDeviceWarp(); //<- To test WARP, you will need NuGet package
     GPUPrefixSums::DeviceInfo deviceInfo = GetDeviceInfo(device.get());
 
     ChainedScanDecoupledLookbackDecoupledFallback* csdldf =
