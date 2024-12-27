@@ -77,12 +77,14 @@ fn main(
         let dev_offset =  part_id * VEC_PART_SIZE;
         var i = s_offset + dev_offset;
 
+        var t_red = 0u;
         if(part_id < info.thread_blocks- 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 t_scan[k] = scan_in[i];
                 t_scan[k].y += t_scan[k].x;
                 t_scan[k].z += t_scan[k].y;
                 t_scan[k].w += t_scan[k].z;
+                t_red += t_scan[k].w;
                 i += lane_count;
             }
         }
@@ -94,22 +96,15 @@ fn main(
                     t_scan[k].y += t_scan[k].x;
                     t_scan[k].z += t_scan[k].y;
                     t_scan[k].w += t_scan[k].z;
+                    t_red += t_scan[k].w;
                 }
                 i += lane_count;
             }
         }
 
-        var prev = 0u;
-        let lane_mask = lane_count - 1u;
-        let circular_shift = (laneid + lane_mask) & lane_mask;
-        for(var k = 0u; k < VEC4_SPT; k += 1u){
-            let t = subgroupShuffle(subgroupInclusiveAdd(t_scan[k].w), circular_shift);
-            t_scan[k] += select(0u, t, laneid != 0u) + prev;
-            prev += subgroupBroadcast(t, 0u);
-        }
-
+        let s_red = subgroupAdd(t_red);
         if(laneid == 0u){
-            wg_reduce[sid] = prev;
+            wg_reduce[sid] = s_red;
         }
     }
     workgroupBarrier();
@@ -254,6 +249,9 @@ fn main(
     }
 
     {
+        var sub_prev = 0u;
+        let lane_mask = lane_count - 1u;
+        let circular_shift = (laneid + lane_mask) & lane_mask;
         let prev = wg_broadcast + select(0u, wg_reduce[sid - 1u], sid != 0u); //wg_broadcast is 0 for part_id 0
         let s_offset = laneid + sid * lane_count * VEC4_SPT;
         let dev_offset =  part_id * VEC_PART_SIZE;
@@ -261,16 +259,20 @@ fn main(
 
         if(part_id < info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                scan_out[i] = t_scan[k] + prev;
+                let t = subgroupShuffle(subgroupInclusiveAdd(select(sub_prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
+                scan_out[i] = t_scan[k] + (prev + select(sub_prev, t, laneid != 0u));
+                sub_prev = t;
                 i += lane_count;
             }
         }
 
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
+                let t = subgroupShuffle(subgroupInclusiveAdd(select(sub_prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
                 if(i < info.vec_size){
-                    scan_out[i] = t_scan[k] + prev;
+                    scan_out[i] = t_scan[k] + (prev + select(sub_prev, t, laneid != 0u));
                 }
+                sub_prev = t;
                 i += lane_count;
             }
         }
