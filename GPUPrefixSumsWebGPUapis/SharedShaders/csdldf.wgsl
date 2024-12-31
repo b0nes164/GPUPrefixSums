@@ -37,7 +37,7 @@ var<storage, read_write> misc: array<u32>;
 
 const BLOCK_DIM = 256u;
 const MIN_SUBGROUP_SIZE = 4u;
-const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE * 2u;
+const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE;
 
 const VEC4_SPT = 4u;
 const VEC_PART_SIZE = BLOCK_DIM * VEC4_SPT;
@@ -70,12 +70,11 @@ fn main(
         wg_lock = LOCKED;
     }
     let part_id = workgroupUniformLoad(&wg_broadcast);
+    let s_offset = laneid + sid * lane_count * VEC4_SPT;
 
     var t_scan = array<vec4<u32>, VEC4_SPT>();
     {
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset =  part_id * VEC_PART_SIZE;
-        var i = s_offset + dev_offset;
+        var i = s_offset + part_id * VEC_PART_SIZE;
 
         if(part_id < info.thread_blocks- 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
@@ -103,9 +102,9 @@ fn main(
         let lane_mask = lane_count - 1u;
         let circular_shift = (laneid + lane_mask) & lane_mask;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
-            let t = subgroupShuffle(subgroupInclusiveAdd(t_scan[k].w), circular_shift);
-            t_scan[k] += select(0u, t, laneid != 0u) + prev;
-            prev += subgroupBroadcast(t, 0u);
+            let t = subgroupShuffle(subgroupInclusiveAdd(select(prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
+            t_scan[k] += select(prev, t, laneid != 0u);
+            prev = t;
         }
 
         if(laneid == 0u){
@@ -114,41 +113,38 @@ fn main(
     }
     workgroupBarrier();
 
-    let spine_size = BLOCK_DIM / lane_count;
-    {
-        var offset = 0u;
-        let d = threadid.x << 1u;
-        {
-            for(var i = spine_size; i >= 4u; i >>= 1u){
-                if(threadid.x < (i >> 1u)) {
-                    let t = d + offset;
-                    wg_reduce[i + threadid.x + offset] = wg_reduce[t] + wg_reduce[t + 1u];
-                }
-                workgroupBarrier();
-                offset += i;
+    //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
+    let lane_log = u32(countTrailingZeros(lane_count));
+    let spine_size = BLOCK_DIM >> lane_log;
+    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
+    {   
+        var offset0 = 0u;
+        var offset1 = 0u;
+        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+            let i0 = ((threadid.x + offset0) << offset1) - offset0;
+            let pred0 = i0 < spine_size;
+            let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
+            if(pred0){
+                wg_reduce[i0] = t0;
             }
+            workgroupBarrier();
 
-            if(threadid.x == 0u){
-                wg_reduce[offset + 1u] = wg_reduce[offset];
-                wg_reduce[offset] = 0u;
-            }
-
-            for(var i = 4u; i <= spine_size; i <<= 1u){
-                offset -= i;
-                workgroupBarrier();
-                if(threadid.x < (i >> 1u)) {
-                    let t = d + offset;
-                    if(t + 1 < spine_size){
-                        wg_reduce[t + 1] += wg_reduce[t] + wg_reduce[threadid.x + i + offset];
-                        wg_reduce[t] += wg_reduce[threadid.x + i + offset];
-                    } else {
-                        wg_reduce[t + 1] = wg_reduce[t] + wg_reduce[threadid.x + i + offset];
-                        wg_reduce[t] = wg_reduce[threadid.x + i + offset];
+            if(j != lane_count){
+                let rshift = j >> lane_log;
+                let i1 = threadid.x + rshift;
+                if ((i1 & (j - 1u)) >= rshift){
+                    let pred1 = i1 < spine_size;
+                    let t1 = select(0u, wg_reduce[((i1 >> offset1) << offset1) - 1u], pred1);
+                    if(pred1 && ((i1 + 1u) & (rshift - 1u)) != 0u){
+                        wg_reduce[i1] += t1;
                     }
                 }
+            } else {
+                offset0 += 1u;
             }
+            offset1 += lane_log;
         }
-    }
+    }   
     workgroupBarrier();
 
     //Device broadcast
@@ -172,8 +168,7 @@ fn main(
                         prev_red += flag_payload >> 2u;
                         spin_count = 0u;
                         if((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                            atomicStore(&reduction[part_id],
-                                ((prev_red + wg_reduce[spine_size - 1u]) << 2u) | FLAG_INCLUSIVE);
+                            atomicAdd(&reduction[part_id], (prev_red << 2u) | 1u);
                             wg_broadcast = prev_red;
                             wg_lock = UNLOCKED;
                             break;
@@ -197,9 +192,7 @@ fn main(
             if(lock == LOCKED){
                 let fallback_id = wg_broadcast;
                 {
-                    let s_offset = laneid + sid * lane_count * VEC4_SPT;
-                    let dev_offset =  fallback_id * VEC_PART_SIZE;
-                    var i = s_offset + dev_offset;
+                    var i = s_offset + fallback_id * VEC_PART_SIZE;
                     var t_red = 0u;
 
                     for(var k = 0u; k < VEC4_SPT; k += 1u){
@@ -217,8 +210,6 @@ fn main(
 
                 //Non-divergent subgroup agnostic reduction across subgroup reductions
                 {
-                    let lane_log = u32(countTrailingZeros(lane_count));
-                    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
                     var offset = 0u;
                     for(var j = lane_count; j <= aligned_size; j <<= lane_log){
                         let i = ((threadid.x + 1u) << offset) - 1u;
@@ -245,8 +236,7 @@ fn main(
                     }
 
                     if(fallback_id == 0u || (f_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                        atomicStore(&reduction[part_id],
-                            ((prev_red + wg_reduce[spine_size - 1u]) << 2u) | FLAG_INCLUSIVE);
+                        atomicAdd(&reduction[part_id], (prev_red << 2u) | 1u);
                         wg_broadcast = prev_red;
                         wg_lock = UNLOCKED;
                     } else {
@@ -260,9 +250,7 @@ fn main(
 
     {
         let prev = wg_broadcast + select(0u, wg_reduce[sid - 1u], sid != 0u); //wg_broadcast is 0 for part_id 0
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset =  part_id * VEC_PART_SIZE;
-        var i = s_offset + dev_offset;
+        var i = s_offset + part_id * VEC_PART_SIZE;
 
         if(part_id < info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
