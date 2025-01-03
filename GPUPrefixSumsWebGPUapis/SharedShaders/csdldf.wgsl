@@ -118,38 +118,14 @@ fn main(
     let spine_size = BLOCK_DIM >> lane_log;
     let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
     {   
-        var top_offset = spine_size;
+        var top_offset = 0u;
+        var offset = 0u;
         let lane_pred = laneid == lane_count - 1u;
-        // let pred0 = threadid.x < spine_size;
-        // let s = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred0));
-        // if (lane_pred && pred0){
-        //     wg_reduce[sid + top_offset] = s;
-        // }
-        var s = 0u;
-        if(threadid.x < spine_size){
-            s = subgroupInclusiveAdd(wg_reduce[threadid.x]);
-            if(lane_pred){
-                wg_reduce[sid + top_offset] = s;
-            }
-        }
-        if(threadid.x < lane_count){
-            wg_reduce[threadid.x] = s;
-        }
-        workgroupBarrier();
-
-        var offset = lane_log;
-        for(var j = lane_count << lane_log; j <= aligned_size; j <<= lane_log){
+        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
             let step = spine_size >> offset;
-            // let pred1 = threadid.x < step;
-            // let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred1));
-            // if(pred1) {
-            //     wg_reduce[threadid.x + top_offset] = t;
-            //     if(lane_pred){
-            //         wg_reduce[(threadid.x >> offset) + step + top_offset] = t;
-            //     }
-            // }
-            if(threadid.x < step){
-                let t = subgroupInclusiveAdd(wg_reduce[threadid.x]);
+            let pred1 = threadid.x < step;
+            let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred1));
+            if(pred1) {
                 wg_reduce[threadid.x + top_offset] = t;
                 if(lane_pred){
                     wg_reduce[(threadid.x >> offset) + step + top_offset] = t;
@@ -160,7 +136,7 @@ fn main(
             let rshift = j >> lane_log;
             let index = threadid.x + rshift;
             if(index < spine_size && (index & (j - 1u)) >= rshift){
-                wg_reduce[index] = s + wg_reduce[sid + top_offset];
+                wg_reduce[index] += wg_reduce[sid + top_offset - 1u];
             }
             top_offset += step;
             offset += lane_log;
