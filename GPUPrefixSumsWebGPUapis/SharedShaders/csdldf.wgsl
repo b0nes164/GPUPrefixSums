@@ -118,25 +118,27 @@ fn main(
     let spine_size = BLOCK_DIM >> lane_log;
     let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
     {   
-        var top_offset = 0u;
         var offset = 0u;
+        var top_offset = 0u;
         let lane_pred = laneid == lane_count - 1u;
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
             let step = spine_size >> offset;
             let pred1 = threadid.x < step;
-            let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x], pred1));
+            let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x + top_offset], pred1));
             if(pred1) {
                 wg_reduce[threadid.x + top_offset] = t;
                 if(lane_pred){
-                    wg_reduce[(threadid.x >> offset) + step + top_offset] = t;
+                    wg_reduce[sid + step + top_offset] = t;
                 }
             }
             workgroupBarrier();
 
-            let rshift = j >> lane_log;
-            let index = threadid.x + rshift;
-            if(index < spine_size && (index & (j - 1u)) >= rshift){
-                wg_reduce[index] += wg_reduce[sid + top_offset - 1u];
+            if(j != lane_count){
+                let rshift = j >> lane_log;
+                let index = threadid.x + rshift;
+                if(index < spine_size && (index & (j - 1u)) >= rshift){
+                    wg_reduce[index] += wg_reduce[(index >> offset) + top_offset - 1u];
+                }
             }
             top_offset += step;
             offset += lane_log;
