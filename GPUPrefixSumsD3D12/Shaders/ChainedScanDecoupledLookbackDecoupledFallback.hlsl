@@ -59,23 +59,29 @@ inline void WaveReduceFull(uint gtid, uint fallbackIndex)
         g_fallBackReduction[getWaveIndex(gtid)] = waveReduction;
 }
 
-inline void LocalReduce(uint gtid)
+inline uint LocalReduce(uint gtid)
 {
+    const bool lanePred = WaveGetLaneIndex() == WaveGetLaneCount() - 1;
     const uint laneLog = countbits(WaveGetLaneCount() - 1);
     const uint spineSize = BLOCK_DIM >> laneLog;
     const uint alignedSize = 1 << (countbits(spineSize - 1) + laneLog - 1) / laneLog * laneLog;
+    
+    uint fRed = 0;
     uint offset = 0;
-    for (uint j = laneLog; j <= alignedSize; j <<= laneLog)
+    uint topOffset = 0;
+    for (uint j = WaveGetLaneCount(); j <= alignedSize; j <<= laneLog)
     {
-        const uint i = (gtid + 1 << offset) - 1;
-        const bool pred = i < spineSize;
-        const uint t0 = pred ? g_fallBackReduction[i] : 0;
-        const uint t1 = WaveActiveSum(t0);
-        if (pred)
-            g_fallBackReduction[i] = t1;
+        const uint step = spineSize >> offset;
+        const bool pred = gtid < step;
+        fRed = WaveActiveSum(pred ? g_fallBackReduction[gtid + topOffset] : 0);
+        if (pred && lanePred)
+            g_fallBackReduction[getWaveIndex(gtid) + step + topOffset] = fRed;
         GroupMemoryBarrierWithGroupSync();
+        topOffset += step;
         offset += laneLog;
     }
+
+    return fRed;
 }
 
 inline void LookbackWithFallback(uint gtid, uint partIndex)
@@ -134,11 +140,9 @@ inline void LookbackWithFallback(uint gtid, uint partIndex)
             WaveReduceFull(gtid, fallbackIndex);
             GroupMemoryBarrierWithGroupSync();
             
-            LocalReduce(gtid);
-            
+            const uint fallbackReduction = LocalReduce(gtid);
             if(!gtid)
             {
-                const uint fallbackReduction = g_fallBackReduction[BLOCK_DIM / WaveGetLaneCount() - 1];
                 uint fallbackPayload;
                 InterlockedMax(b_threadBlockReduction[fallbackIndex],
                     (fallbackIndex ? FLAG_REDUCTION : FLAG_INCLUSIVE) | fallbackReduction << 2, fallbackPayload);
