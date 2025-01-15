@@ -30,12 +30,13 @@ var<storage, read_write> scan_out: array<vec4<u32>>;
 var<storage, read_write> scan_bump: atomic<u32>;
 
 @group(0) @binding(4)
-var<storage, read_write> reduction: array<atomic<u32>>;
+var<storage, read_write> reduction: array<array<atomic<u32>, 4>>;
 
 @group(0) @binding(5)
 var<storage, read_write> misc: array<u32>;
 
 const BLOCK_DIM = 256u;
+const SPLIT_MEMBERS = 2u;
 const MIN_SUBGROUP_SIZE = 4u;
 const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE * 2u; //Double for conflict avoidance
 
@@ -43,9 +44,9 @@ const VEC4_SPT = 4u;
 const VEC_PART_SIZE = BLOCK_DIM * VEC4_SPT;
 
 const FLAG_NOT_READY = 0u;
-const FLAG_REDUCTION = 1u;
-const FLAG_INCLUSIVE = 2u;
-const FLAG_MASK = 3u;
+const FLAG_READY = 1u;
+const FLAG_MASK = 1u;
+const ALL_READY = 3u;
 
 const MAX_SPIN_COUNT = 4u;
 const LOCKED = 1u;
@@ -57,12 +58,14 @@ var<workgroup> wg_reduce: array<u32, MAX_REDUCE_SIZE>;
 var<workgroup> wg_fallback: array<u32, MAX_REDUCE_SIZE>;
 
 //Wrap all values
-fn join() -> u32 {
-    return 0u;
+fn join(mine: u32, tid: u32) -> u32 {
+    let xor = tid ^ 1;
+    let theirs = subgroupShuffle(mine, xor);
+    return (mine << (16u * tid)) | (theirs << (16u * xor));
 }
 
-fn split(x: u32, threadid: u32) -> u32 {
-    return (x >> (threadid * 16u)) & 0xffffu; //bitcast as needed
+fn split(x: u32, tid: u32) -> u32 {
+    return (x >> (tid * 16u)) & 0xffffu; //bitcast as needed
 }
 
 fn combine(x: u32, y: u32) -> u32 {
@@ -177,43 +180,61 @@ fn main(
     workgroupBarrier();
 
     //Device broadcast
-    if(threadid.x == 0u){
-        atomicStore(&reduction[part_id], (wg_reduce[spine_size - 1u] << 2u) |
-            select(FLAG_INCLUSIVE, FLAG_REDUCTION, part_id != 0u));
+    if(threadid.x < SPLIT_MEMBERS){
+        let t = (split(wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
+        if(part_id == 0u){
+            atomicStore(&reduction[part_id][threadid.x + 2u], t);
+        }
+        atomicStore(&reduction[part_id][threadid.x], t);
     }
 
-    //Lookback, single thread
+    //lookback, single subgroup
     if(part_id != 0u){
         var prev_red = 0u;
         var lookback_id = part_id - 1u;
 
         var lock = workgroupUniformLoad(&wg_lock);
         while(lock == LOCKED){
-            if(threadid.x == 0u){
+            if(threadid.x < lane_count){
                 var spin_count = 0u;
                 while(spin_count < MAX_SPIN_COUNT){
-                    let flag_payload = atomicLoad(&reduction[lookback_id]);
-                    if((flag_payload & FLAG_MASK) > FLAG_NOT_READY){
-                        prev_red += flag_payload >> 2u;
-                        spin_count = 0u;
-                        if((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                            atomicStore(&reduction[part_id],
-                                ((prev_red + wg_reduce[spine_size - 1u]) << 2u) | FLAG_INCLUSIVE);
-                            wg_broadcast = prev_red;
-                            wg_lock = UNLOCKED;
+                    let loc_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x]), threadid.x < SPLIT_MEMBERS);
+                    if(subgroupBallot((loc_payload & FLAG_MASK) == 1u).x == ALL_READY) {
+                        let glob_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x + 2]), threadid.x < SPLIT_MEMBERS);
+                        if(subgroupBallot((glob_payload & FLAG_MASK) == 1u).x == ALL_READY) {
+                            prev_red += join(glob_payload >> 1u, threadid.x);
+                            if(threadid.x < SPLIT_MEMBERS){
+                                let t = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
+                                atomicStore(&reduction[part_id][threadid.x + 2u], t);
+                            }
+                            if(threadid.x == 0u){
+                                wg_lock = UNLOCKED;
+                                wg_broadcast = prev_red;
+                            }
                             break;
                         } else {
+                            prev_red += join(loc_payload >> 1u, threadid.x);
+                            if(lookback_id == 0u){
+                                if(threadid.x < SPLIT_MEMBERS){
+                                    let t = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
+                                    atomicStore(&reduction[part_id][threadid.x + 2u], t);
+                                }
+                                if(threadid.x == 0u){
+                                    wg_lock = UNLOCKED;
+                                    wg_broadcast = prev_red;
+                                }
+                                break;
+                            }
+                            spin_count = 0u;
                             lookback_id -= 1u;
                         }
                     } else {
                         spin_count += 1u;
                     }
-                }
 
-                //If we did not complete the lookback within the alotted spins,
-                //broadcast the lookback id in shared memory to prepare for the fallback
-                if(spin_count == MAX_SPIN_COUNT){
-                    wg_broadcast = lookback_id;
+                    if(threadid.x == 0 && spin_count == MAX_SPIN_COUNT) {
+                        wg_broadcast = lookback_id;
+                    }
                 }
             }
 
@@ -241,8 +262,6 @@ fn main(
                 workgroupBarrier();
 
                 //Non-divergent subgroup agnostic reduction across subgroup reductions
-                //The final level of the reduce must consist of the first subgroup, so
-                //the full reduction is guaranteed to be in this register.
                 var f_red = 0u;
                 {
                     var offset = 0u;
@@ -261,28 +280,30 @@ fn main(
                     }
                 }
 
-                if(threadid.x == 0u){
-                    //Max will store when no insertion has been made, but will not overwrite a tile
-                    //which has already inserted, or been updated to FLAG_INCLUSIVE
-                    let f_payload = atomicMax(&reduction[fallback_id],
-                        (f_red << 2u) | select(FLAG_INCLUSIVE, FLAG_REDUCTION, fallback_id != 0u));
-                    if(f_payload == 0u){
+                //We no longer read values back from our update attempt.
+                if(fallback_id == 0u){
+                    if(threadid.x < SPLIT_MEMBERS){
                         prev_red += f_red;
-                    } else {
-                        prev_red += f_payload >> 2u;
+                        let f_split = (split(f_red, threadid.x) << 1u) | FLAG_READY;
+                        atomicStore(&reduction[fallback_id][threadid.x], f_split);
+                        atomicStore(&reduction[fallback_id][threadid.x + 2u], f_split);
+                        let this_split = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
+                        atomicStore(&reduction[part_id][threadid.x + 2u], this_split);
                     }
-
-                    if(fallback_id == 0u || (f_payload & FLAG_MASK) == FLAG_INCLUSIVE){
-                        atomicStore(&reduction[part_id],
-                            ((prev_red + wg_reduce[spine_size - 1u]) << 2u) | FLAG_INCLUSIVE);
-                        wg_broadcast = prev_red;
+                    if(threadid.x == 0u){
                         wg_lock = UNLOCKED;
-                    } else {
+                        wg_broadcast = prev_red;
+                    }
+                    lock = workgroupUniformLoad(&wg_lock);
+                } else {
+                    if(threadid.x < SPLIT_MEMBERS){
+                        prev_red += f_red;
+                        let f_split = (split(f_red, threadid.x) << 1u) | FLAG_READY;
+                        atomicStore(&reduction[fallback_id][threadid.x], f_split);
                         lookback_id -= 1u;
                     }
                 }
-                lock = workgroupUniformLoad(&wg_lock);
-            }   
+            }
         }
     }
 
