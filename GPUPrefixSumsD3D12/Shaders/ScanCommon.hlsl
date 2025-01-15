@@ -96,8 +96,8 @@ inline void ScanExclusiveFull(uint gtid, uint partIndex, inout t_scan t_s)
         t_s.t[k].x += t_s.t[k].w;
         t_s.t[k].w = t0;
         
-        const uint t1 = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].w), circularShift);
-        t_s.t[k].w = SetXAddYZW(WaveGetLaneIndex() ? t1 : waveReduction, t_s.t[k]);
+        const uint t1 = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].x), circularShift);
+        t_s.t[k] = SetXAddYZW(WaveGetLaneIndex() ? t1 : waveReduction, t_s.t[k]);
         waveReduction = t1;
     }
     
@@ -130,8 +130,8 @@ inline void ScanExclusivePartial(uint gtid, uint partIndex, inout t_scan t_s)
         t_s.t[k].x += t_s.t[k].w;
         t_s.t[k].w = t0;
         
-        const uint t1 = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].w), circularShift);
-        t_s.t[k].w = SetXAddYZW(WaveGetLaneIndex() ? t1 : waveReduction, t_s.t[k]);
+        const uint t1 = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].x), circularShift);
+        t_s.t[k] = SetXAddYZW(WaveGetLaneIndex() ? t1 : waveReduction, t_s.t[k]);
         waveReduction = t1;
     }
     
@@ -156,7 +156,7 @@ inline void ScanInclusiveFull(uint gtid, uint partIndex, inout t_scan t_s)
         t_s.t[k].w += t_s.t[k].z;
         
         const uint t = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].w), circularShift);
-        t_s.t[k].w += WaveGetLaneIndex() ? t : waveReduction;
+        t_s.t[k] += WaveGetLaneIndex() ? t : waveReduction;
         waveReduction = t;
     }
     
@@ -181,7 +181,7 @@ inline void ScanInclusivePartial(uint gtid, uint partIndex, inout t_scan t_s)
         t_s.t[k].w += t_s.t[k].z;
         
         const uint t = WaveReadLaneAt(WaveInclusivePrefixSum((WaveGetLaneIndex() ? 0 : waveReduction) + t_s.t[k].w), circularShift);
-        t_s.t[k].w += WaveGetLaneIndex() ? t : waveReduction;
+        t_s.t[k] += WaveGetLaneIndex() ? t : waveReduction;
         waveReduction = t;
     }
     

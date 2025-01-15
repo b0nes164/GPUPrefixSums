@@ -133,7 +133,7 @@ fn main(
         let circular_shift = (laneid + lane_mask) & lane_mask;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
             let t = subgroupShuffle(subgroupInclusiveScan(select(prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
-            t_scan[k] = combine(t_scan[k], select(prev, t, laneid != 0u));
+            t_scan[k] = combineVec4(t_scan[k], select(prev, t, laneid != 0u));
             prev = t;
         }
 

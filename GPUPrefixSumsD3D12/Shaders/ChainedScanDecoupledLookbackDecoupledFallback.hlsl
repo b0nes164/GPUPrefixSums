@@ -25,7 +25,7 @@ globallycoherent RWStructuredBuffer<uint> b_threadBlockReduction : register(u3);
 
 groupshared uint g_broadcast;
 groupshared bool g_lock;
-groupshared uint g_fallBackReduction[BLOCK_DIM / MIN_WAVE_SIZE];
+groupshared uint g_fallBackReduction[BLOCK_DIM / MIN_WAVE_SIZE * 2]; //Double for bank conflict avoidance
 
 inline void AcquirePartitionIndexSetLock(uint gtid)
 {

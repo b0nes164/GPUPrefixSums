@@ -471,7 +471,7 @@ fn readback_back(tester: &Tester, data_out: &mut Vec<u32>, readback_size: u64) {
     });
     tester.gpu_context.device.poll(wgpu::Maintain::wait());
     let data = readback_slice.get_mapped_range();
-    data_out.extend_from_slice(bytemuck::cast_slice(&data));
+    data_out[..1].copy_from_slice(bytemuck::cast_slice(&data));
 }
 
 fn validate_base(tester: &Tester, cs: &ComputeShader) -> bool {
@@ -503,7 +503,7 @@ fn validate_base(tester: &Tester, cs: &ComputeShader) -> bool {
         .queue
         .submit(Some(valid_command.finish()));
 
-    let mut data_out: Vec<u32> = vec![];
+    let mut data_out: Vec<u32> = vec![0xffffffff; 1];
     readback_back(tester, &mut data_out, std::mem::size_of::<u32>() as u64);
     tester.gpu_buffers.readback.unmap();
 
