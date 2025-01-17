@@ -30,7 +30,7 @@ var<storage, read_write> scan_out: array<vec4<u32>>;
 var<storage, read_write> scan_bump: atomic<u32>;
 
 @group(0) @binding(4)
-var<storage, read_write> reduction: array<array<atomic<u32>, 4>>;
+var<storage, read_write> reduction: array<array<atomic<u32>, 2>>;
 
 @group(0) @binding(5)
 var<storage, read_write> misc: array<u32>;
@@ -44,8 +44,10 @@ const VEC4_SPT = 4u;
 const VEC_PART_SIZE = BLOCK_DIM * VEC4_SPT;
 
 const FLAG_NOT_READY = 0u;
-const FLAG_READY = 1u;
-const FLAG_MASK = 1u;
+const FLAG_READY = 0x40000000u;
+const FLAG_INCLUSIVE = 0x80000000u;
+const FLAG_MASK = 0xC0000000u;
+const VALUE_MASK = 0xffffu;
 const ALL_READY = 3u;
 
 const MAX_SPIN_COUNT = 4u;
@@ -65,27 +67,7 @@ fn join(mine: u32, tid: u32) -> u32 {
 }
 
 fn split(x: u32, tid: u32) -> u32 {
-    return (x >> (tid * 16u)) & 0xffffu; //bitcast as needed
-}
-
-fn combine(x: u32, y: u32) -> u32 {
-    return x + y;
-}
-
-fn combineVec4(x: vec4<u32>, y: u32) -> vec4<u32> {
-    return x + y;
-}
-
-fn reduceVec4(x: vec4<u32>) -> u32 {
-    return dot(x, vec4<u32>(1u, 1u, 1u, 1u));
-}
-
-fn subgroupInclusiveScan(x: u32) -> u32 {
-    return subgroupInclusiveAdd(x);
-}
-
-fn subgroupReduce(x: u32) -> u32 {
-    return subgroupAdd(x);
+    return (x >> (tid * 16u)) & VALUE_MASK; //bitcast as needed
 }
 
 @compute @workgroup_size(BLOCK_DIM, 1, 1)
@@ -102,19 +84,17 @@ fn main(
         wg_lock = LOCKED;
     }
     let part_id = workgroupUniformLoad(&wg_broadcast);
+    let s_offset = laneid + sid * lane_count * VEC4_SPT;
 
     var t_scan = array<vec4<u32>, VEC4_SPT>();
     {
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset =  part_id * VEC_PART_SIZE;
-        var i = s_offset + dev_offset;
-
+        var i = s_offset + part_id * VEC_PART_SIZE;
         if(part_id < info.thread_blocks- 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 t_scan[k] = scan_in[i];
-                t_scan[k].y = combine(t_scan[k].y, t_scan[k].x);
-                t_scan[k].z = combine(t_scan[k].z, t_scan[k].y);
-                t_scan[k].w = combine(t_scan[k].w, t_scan[k].z);
+                t_scan[k].y += t_scan[k].x;
+                t_scan[k].z += t_scan[k].y;
+                t_scan[k].w += t_scan[k].z;
                 i += lane_count;
             }
         }
@@ -123,9 +103,9 @@ fn main(
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 if(i < info.vec_size){
                     t_scan[k] = scan_in[i];
-                    t_scan[k].y = combine(t_scan[k].y, t_scan[k].x);
-                    t_scan[k].z = combine(t_scan[k].z, t_scan[k].y);
-                    t_scan[k].w = combine(t_scan[k].w, t_scan[k].z);
+                    t_scan[k].y += t_scan[k].x;
+                    t_scan[k].z += t_scan[k].y;
+                    t_scan[k].w += t_scan[k].z;
                 }
                 i += lane_count;
             }
@@ -135,8 +115,8 @@ fn main(
         let lane_mask = lane_count - 1u;
         let circular_shift = (laneid + lane_mask) & lane_mask;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
-            let t = subgroupShuffle(subgroupInclusiveScan(select(prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
-            t_scan[k] = combineVec4(t_scan[k], select(prev, t, laneid != 0u));
+            let t = subgroupShuffle(subgroupInclusiveAdd(select(prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
+            t_scan[k] += select(prev, t, laneid != 0u);
             prev = t;
         }
 
@@ -157,7 +137,7 @@ fn main(
         for(var j = lane_count; j <= aligned_size; j <<= lane_log){
             let step = spine_size >> offset;
             let pred = threadid.x < step;
-            let t = subgroupInclusiveScan(select(0u, wg_reduce[threadid.x + top_offset], pred));
+            let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x + top_offset], pred));
             if(pred){
                 wg_reduce[threadid.x + top_offset] = t;
                 if(lane_pred){
@@ -170,7 +150,7 @@ fn main(
                 let rshift = j >> lane_log;
                 let index = threadid.x + rshift;
                 if(index < spine_size && (index & (j - 1u)) >= rshift){
-                    wg_reduce[index] = combine(wg_reduce[index], wg_reduce[(index >> offset) + top_offset - 1u]);
+                    wg_reduce[index] += wg_reduce[(index >> offset) + top_offset - 1u];
                 }
             }
             top_offset += step;
@@ -181,10 +161,7 @@ fn main(
 
     //Device broadcast
     if(threadid.x < SPLIT_MEMBERS){
-        let t = (split(wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
-        if(part_id == 0u){
-            atomicStore(&reduction[part_id][threadid.x + 2u], t);
-        }
+        let t = split(wg_reduce[spine_size - 1u], threadid.x) | select(FLAG_READY, FLAG_INCLUSIVE, part_id == 0u);
         atomicStore(&reduction[part_id][threadid.x], t);
     }
 
@@ -192,20 +169,24 @@ fn main(
     if(part_id != 0u){
         var prev_red = 0u;
         var lookback_id = part_id - 1u;
-
         var lock = workgroupUniformLoad(&wg_lock);
         while(lock == LOCKED){
             if(threadid.x < lane_count){
                 var spin_count = 0u;
                 while(spin_count < MAX_SPIN_COUNT){
-                    let loc_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x]), threadid.x < SPLIT_MEMBERS);
-                    if(subgroupBallot((loc_payload & FLAG_MASK) == 1u).x == ALL_READY) {
-                        let glob_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x + 2]), threadid.x < SPLIT_MEMBERS);
-                        if(subgroupBallot((glob_payload & FLAG_MASK) == 1u).x == ALL_READY) {
-                            prev_red += join(glob_payload >> 1u, threadid.x);
+                    var flag_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x]), threadid.x < SPLIT_MEMBERS);
+                    if(subgroupBallot((flag_payload & FLAG_MASK) > FLAG_NOT_READY).x == ALL_READY) {
+                        var incl_bal = subgroupBallot((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE).x;
+                        if(incl_bal != 0u) {
+                            //Did we find any inclusive? Alright, the rest are guaranteed to be on their way, lets just wait. 
+                            while(incl_bal != ALL_READY){
+                                flag_payload = select(0u, atomicLoad(&reduction[lookback_id][threadid.x]), threadid.x < SPLIT_MEMBERS);
+                                incl_bal = subgroupBallot((flag_payload & FLAG_MASK) == FLAG_INCLUSIVE).x;
+                            }
+                            prev_red += join(flag_payload & VALUE_MASK, threadid.x);
                             if(threadid.x < SPLIT_MEMBERS){
-                                let t = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
-                                atomicStore(&reduction[part_id][threadid.x + 2u], t);
+                                let t = split(prev_red + wg_reduce[spine_size - 1u], threadid.x) | FLAG_INCLUSIVE;
+                                atomicStore(&reduction[part_id][threadid.x], t);
                             }
                             if(threadid.x == 0u){
                                 wg_lock = UNLOCKED;
@@ -213,18 +194,7 @@ fn main(
                             }
                             break;
                         } else {
-                            prev_red += join(loc_payload >> 1u, threadid.x);
-                            if(lookback_id == 0u){
-                                if(threadid.x < SPLIT_MEMBERS){
-                                    let t = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
-                                    atomicStore(&reduction[part_id][threadid.x + 2u], t);
-                                }
-                                if(threadid.x == 0u){
-                                    wg_lock = UNLOCKED;
-                                    wg_broadcast = prev_red;
-                                }
-                                break;
-                            }
+                            prev_red += join(flag_payload & VALUE_MASK, threadid.x);
                             spin_count = 0u;
                             lookback_id -= 1u;
                         }
@@ -243,18 +213,14 @@ fn main(
             if(lock == LOCKED){
                 let fallback_id = wg_broadcast;
                 {
-                    let s_offset = laneid + sid * lane_count * VEC4_SPT;
-                    let dev_offset =  fallback_id * VEC_PART_SIZE;
-                    var i = s_offset + dev_offset;
                     var t_red = 0u;
-
+                    var i = s_offset + fallback_id * VEC_PART_SIZE;
                     for(var k = 0u; k < VEC4_SPT; k += 1u){
-                        let t = scan_in[i];
-                        t_red = combine(t_red, reduceVec4(t));
+                        t_red += dot(scan_in[i], vec4<u32>(1u, 1u, 1u, 1u));
                         i += lane_count;
                     }
 
-                    let s_red = subgroupReduce(t_red);
+                    let s_red = subgroupAdd(t_red);
                     if(laneid == 0u){
                         wg_fallback[sid] = s_red;
                     }
@@ -269,9 +235,9 @@ fn main(
                     let lane_pred = laneid == lane_count - 1u;
                     for(var j = lane_count; j <= aligned_size; j <<= lane_log){
                         let step = spine_size >> offset;
-                        let pred0 = threadid.x < step;
-                        f_red = subgroupReduce(select(0u, wg_fallback[threadid.x + top_offset], pred0));
-                        if(pred0 && lane_pred){
+                        let pred = threadid.x < step;
+                        f_red = subgroupAdd(select(0u, wg_fallback[threadid.x + top_offset], pred));
+                        if(pred && lane_pred){
                             wg_fallback[sid + step + top_offset] = f_red;
                         }
                         workgroupBarrier();
@@ -280,42 +246,45 @@ fn main(
                     }
                 }
 
-                //We no longer read values back from our update attempt.
-                if(fallback_id == 0u){
-                    if(threadid.x < SPLIT_MEMBERS){
-                        prev_red += f_red;
-                        let f_split = (split(f_red, threadid.x) << 1u) | FLAG_READY;
-                        atomicStore(&reduction[fallback_id][threadid.x], f_split);
-                        atomicStore(&reduction[fallback_id][threadid.x + 2u], f_split);
-                        let this_split = (split(prev_red + wg_reduce[spine_size - 1u], threadid.x) << 1u) | FLAG_READY;
-                        atomicStore(&reduction[part_id][threadid.x + 2u], this_split);
+                if(threadid.x < lane_count){
+                    let f_split = split(f_red, threadid.x) | select(FLAG_READY, FLAG_INCLUSIVE, fallback_id == 0u);
+                    //This ternary does not play well for some reason?
+                    //let f_payload = select(0u, atomicMax(&reduction[fallback_id][threadid.x], f_split), threadid.x < SPLIT_MEMBERS);
+                    var f_payload = 0u;
+                    if(threadid.x < SPLIT_MEMBERS) {
+                        f_payload = atomicMax(&reduction[fallback_id][threadid.x], f_split);
                     }
-                    if(threadid.x == 0u){
-                        wg_lock = UNLOCKED;
-                        wg_broadcast = prev_red;
-                    }
-                    lock = workgroupUniformLoad(&wg_lock);
-                } else {
-                    if(threadid.x < SPLIT_MEMBERS){
+                    let incl_found = subgroupBallot((f_payload & FLAG_MASK) == FLAG_INCLUSIVE).x == ALL_READY;
+                    if(incl_found){
+                        prev_red += join(f_payload & VALUE_MASK, threadid.x); 
+                    } else {
                         prev_red += f_red;
-                        let f_split = (split(f_red, threadid.x) << 1u) | FLAG_READY;
-                        atomicStore(&reduction[fallback_id][threadid.x], f_split);
+                    }
+
+                    if(fallback_id == 0u || incl_found){
+                        if(threadid.x < SPLIT_MEMBERS){
+                            let t = split(prev_red + wg_reduce[spine_size - 1u], threadid.x) | FLAG_INCLUSIVE;
+                            atomicStore(&reduction[part_id][threadid.x], t);
+                        }
+                        if(threadid.x == 0u){
+                            wg_lock = UNLOCKED;
+                            wg_broadcast = prev_red;
+                        }
+                    } else {
                         lookback_id -= 1u;
                     }
                 }
+                lock = workgroupUniformLoad(&wg_lock);
             }
         }
     }
 
     {
+        var i = s_offset + part_id * VEC_PART_SIZE;
         let prev = wg_broadcast + select(0u, wg_reduce[sid - 1u], sid != 0u); //wg_broadcast is 0 for part_id 0
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset =  part_id * VEC_PART_SIZE;
-        var i = s_offset + dev_offset;
-
         if(part_id < info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
-                scan_out[i] = combineVec4(t_scan[k], prev);
+                scan_out[i] = t_scan[k] + prev;
                 i += lane_count;
             }
         }
@@ -323,7 +292,7 @@ fn main(
         if(part_id == info.thread_blocks - 1u){
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 if(i < info.vec_size){
-                    scan_out[i] = combineVec4(t_scan[k], prev);
+                    scan_out[i] = t_scan[k] + prev;
                 }
                 i += lane_count;
             }
