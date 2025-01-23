@@ -14,7 +14,7 @@ struct InfoStruct
 {
     size: u32,
     vec_size: u32,
-    thread_blocks: u32,
+    work_tiles: u32,
 };
 
 @group(0) @binding(0)
@@ -35,9 +35,11 @@ var<storage, read_write> reduction: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> misc: array<u32>;
 
+const LAUNCH_DIM = 4096u;
+const LAUNCH_MASK = 4095u;
 const BLOCK_DIM = 256u;
 const MIN_SUBGROUP_SIZE = 4u;
-const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE;
+const MAX_REDUCE_SIZE = BLOCK_DIM / MIN_SUBGROUP_SIZE * 2u; //Double for conflict avoidance
 
 const VEC4_SPT = 4u;
 const VEC_PART_SIZE = BLOCK_DIM * VEC4_SPT;
@@ -56,50 +58,63 @@ fn reduce(
     
     let sid = threadid.x / lane_count;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
     let s_offset = laneid + sid * lane_count * VEC4_SPT;
-    let dev_offset = wgid.x * VEC_PART_SIZE;
-    var i: u32 = s_offset + dev_offset;
+    let lane_log = u32(countTrailingZeros(lane_count));
+    let lane_pred = laneid == lane_count - 1u;
+    let spine_size = BLOCK_DIM >> lane_log;
+    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
 
-    var s_red = 0u;
-    if(wgid.x < info.thread_blocks - 1u){
-        for(var k = 0u; k < VEC4_SPT; k += 1u){
-            let t = scan_in[i];
-            s_red += dot(t, vec4(1u, 1u, 1u, 1u));
-            i += lane_count;
+    var dev_offset = 0u;
+    var end = 0u;
+    {   
+        let div = info.work_tiles / LAUNCH_DIM;
+        let partials = info.work_tiles & LAUNCH_MASK;
+        let pred = wgid.x < partials;
+        let tiles = div + select(0u, 1u, pred);
+        if(pred) {
+            dev_offset = wgid.x * VEC_PART_SIZE * (div + 1u);
+        } else {
+            dev_offset = partials * VEC_PART_SIZE * (div + 1u) + (wgid.x - partials) * VEC_PART_SIZE * div; 
         }
+        end = dev_offset + tiles * VEC_PART_SIZE;
     }
 
-    if(wgid.x == info.thread_blocks - 1u){
+    var rake_red = 0u;
+    for(; dev_offset < end; dev_offset += VEC_PART_SIZE){
+        var s_red = 0u;
+        var i: u32 = s_offset + dev_offset;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
             let t = select(vec4<u32>(0u, 0u, 0u, 0u), scan_in[i], i < info.vec_size);
             s_red += dot(t, vec4(1u, 1u, 1u, 1u));
             i += lane_count;
         }
-    }
 
-    s_red = subgroupAdd(s_red);
-    if(laneid == 0u){
-        wg_reduce[sid] = s_red;
-    }
-    workgroupBarrier();
-
-    //Non-divergent subgroup agnostic reduction across subgroup reductions
-    let lane_log = u32(countTrailingZeros(lane_count));
-    let spine_size = BLOCK_DIM >> lane_log;
-    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
-    var offset = 0u;
-    for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-        let i = ((threadid.x + 1u) << offset) - 1u;
-        let pred0 = i < spine_size;
-        let t = subgroupAdd(select(0u, wg_reduce[i], pred0));
-        if(pred0){
-            wg_reduce[i] = t;
+        s_red = subgroupAdd(s_red);
+        if(lane_pred){
+            wg_reduce[sid] = s_red;
         }
         workgroupBarrier();
-        offset += lane_log;
-    }
 
+        //Non-divergent subgroup agnostic reduction across subgroup reductions
+        var w_red = 0u;
+        var offset = 0u;
+        var top_offset = 0u;
+        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+            let step = spine_size >> offset;
+            let pred = threadid.x < step;
+            w_red = subgroupAdd(select(0u, wg_reduce[threadid.x + top_offset], pred));
+            if(pred && lane_pred){
+                wg_reduce[sid + step + top_offset] = w_red;
+            }
+            workgroupBarrier();
+            top_offset += step;
+            offset += lane_log;
+        }
+
+        rake_red += w_red;
+    }
+    
     if(threadid.x == 0u){
-        reduction[wgid.x] = wg_reduce[spine_size - 1u];
+        reduction[wgid.x] = rake_red;
     }
 }
 
@@ -111,80 +126,66 @@ fn spine_scan(
     @builtin(subgroup_size) lane_count: u32) {
     
     let sid = threadid.x / lane_count;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
-    let lane_log = u32(countTrailingZeros(lane_count));
     let s_offset = laneid + sid * lane_count * SPINE_SPT;
-    let local_spine_size = BLOCK_DIM >> lane_log;
-    let local_aligned_size = 1u << ((u32(countTrailingZeros(local_spine_size)) + lane_log - 1u) / lane_log * lane_log);
-    let aligned_size = (info.thread_blocks + SPINE_PART_SIZE - 1u) / SPINE_PART_SIZE * SPINE_PART_SIZE;
     var t_scan = array<u32, SPINE_SPT>();
     
-    var prev_red = 0u;
-    for(var dev_offset = 0u; dev_offset < aligned_size; dev_offset += SPINE_PART_SIZE){
-        {
-            var i = s_offset + dev_offset;
-            for(var k = 0u; k < SPINE_SPT; k += 1u){
-                if(i < info.thread_blocks){
-                    t_scan[k] = reduction[i];
-                }
-                i += lane_count;
-            }
-        }
+    var i = s_offset;
+    for(var k = 0u; k < SPINE_SPT; k += 1u){
+        t_scan[k] = reduction[i];
+        i += lane_count;
+    }
 
-        var prev = 0u;
+    var prev = 0u;
+    for(var k = 0u; k < SPINE_SPT; k += 1u){
+        t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
+        prev = subgroupShuffle(t_scan[k], lane_count - 1);
+    }
+
+    if(laneid == lane_count - 1u){
+        wg_reduce[sid] = prev;
+    }
+    workgroupBarrier();
+
+    //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
+    {   
+        var offset = 0u;
+        var top_offset = 0u;
+        let lane_log = u32(countTrailingZeros(lane_count));
+        let lane_pred = laneid == lane_count - 1u;
+        let spine_size = BLOCK_DIM >> lane_log;
+        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
+        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+            let step = spine_size >> offset;
+            let pred = threadid.x < step;
+            let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x + top_offset], pred));
+            if(pred){
+                wg_reduce[threadid.x + top_offset] = t;
+                if(lane_pred){
+                    wg_reduce[sid + step + top_offset] = t;
+                }
+            }
+            workgroupBarrier();
+
+            if(j != lane_count){
+                let rshift = j >> lane_log;
+                let index = threadid.x + rshift;
+                if(index < spine_size && (index & (j - 1u)) >= rshift){
+                    wg_reduce[index] += wg_reduce[(index >> offset) + top_offset - 1u];
+                }
+            }
+            top_offset += step;
+            offset += lane_log;
+        }
+    }   
+    workgroupBarrier();
+
+    {
+        let prev = select(0u, wg_reduce[sid - 1u], sid != 0u);
+        var i: u32 = s_offset;
         for(var k = 0u; k < SPINE_SPT; k += 1u){
-            t_scan[k] = subgroupInclusiveAdd(t_scan[k]) + prev;
-            prev = subgroupShuffle(t_scan[k], lane_count - 1);
+            reduction[i] = t_scan[k] + prev;
+            i += lane_count;
         }
-
-        if(laneid == lane_count - 1u){
-            wg_reduce[sid] = prev;
-        }
-        workgroupBarrier();
-
-        //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
-        {   
-            var offset0 = 0u;
-            var offset1 = 0u;
-            for(var j = lane_count; j <= local_aligned_size; j <<= lane_log){
-                let i0 = ((threadid.x + offset0) << offset1) - select(0u, 1u, j != lane_count);
-                let pred0 = i0 < local_spine_size;
-                let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
-                if(pred0){
-                    wg_reduce[i0] = t0;
-                }
-                workgroupBarrier();
-
-                if(j != lane_count){
-                    let rshift = j >> lane_log;
-                    let i1 = threadid.x + rshift;
-                    if ((i1 & (j - 1u)) >= rshift){
-                        let pred1 = i1 < local_spine_size;
-                        let t1 = select(0u, wg_reduce[((i1 >> offset1) << offset1) - 1u], pred1);
-                        if(pred1 && ((i1 + 1u) & (rshift - 1u)) != 0u){
-                            wg_reduce[i1] += t1;
-                        }
-                    }
-                } else {
-                    offset0 += 1u;
-                }
-                offset1 += lane_log;
-            }
-        }   
-        workgroupBarrier();
-
-        {
-            let prev = select(0u, wg_reduce[sid - 1u], sid != 0u) + prev_red;
-            var i: u32 = s_offset + dev_offset;
-            for(var k = 0u; k < SPINE_SPT; k += 1u){
-                if(i < info.thread_blocks){
-                    reduction[i] = t_scan[k] + prev;
-                }
-                i += lane_count;
-            }
-        }
-
-        prev_red += subgroupBroadcast(wg_reduce[local_spine_size - 1u], 0u);
-        workgroupBarrier();
     }
 }    
 
@@ -196,24 +197,35 @@ fn downsweep(
     @builtin(workgroup_id) wgid: vec3<u32>) {
     
     let sid = threadid.x / lane_count;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
-    var t_scan = array<vec4<u32>, VEC4_SPT>();
+    let lane_log = u32(countTrailingZeros(lane_count));
+    let lane_mask = lane_count - 1u;
+    let circular_shift = (laneid + lane_mask) & lane_mask;
+    let lane_pred = laneid == lane_mask;
+    let spine_size = BLOCK_DIM >> lane_log;
+    let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
+    let s_offset = laneid + sid * lane_count * VEC4_SPT;
+    let rake_prev = select(0u, reduction[wgid.x - 1u], wgid.x != 0u);
 
-    {
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset = wgid.x * VEC_PART_SIZE;
-        var i: u32 = s_offset + dev_offset;
-
-        if(wgid.x < info.thread_blocks- 1u){
-            for(var k = 0u; k < VEC4_SPT; k += 1u){
-                t_scan[k] = scan_in[i];
-                t_scan[k].y += t_scan[k].x;
-                t_scan[k].z += t_scan[k].y;
-                t_scan[k].w += t_scan[k].z;
-                i += lane_count;
-            }
+    var dev_offset = 0u;
+    var end = 0u;
+    {   
+        let div = info.work_tiles / LAUNCH_DIM;
+        let partials = info.work_tiles & LAUNCH_MASK;
+        let pred = wgid.x < partials;
+        let tiles = div + select(0u, 1u, pred);
+        if(pred) {
+            dev_offset = wgid.x * VEC_PART_SIZE * (div + 1u);
+        } else {
+            dev_offset = partials * VEC_PART_SIZE * (div + 1u) + (wgid.x - partials) * VEC_PART_SIZE * div; 
         }
+        end = dev_offset + tiles * VEC_PART_SIZE;
+    }
 
-        if(wgid.x == info.thread_blocks - 1u){
+    var rake_red = 0u;
+    var t_scan = array<vec4<u32>, VEC4_SPT>();
+    for(; dev_offset < end; dev_offset += VEC_PART_SIZE){
+        {
+            var i: u32 = s_offset + dev_offset;
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 if(i < info.vec_size){
                     t_scan[k] = scan_in[i];
@@ -224,76 +236,59 @@ fn downsweep(
                 i += lane_count;
             }
         }
-
+        
         var prev = 0u;
-        let lane_mask = lane_count - 1u;
-        let circular_shift = (laneid + lane_mask) & lane_mask;
         for(var k = 0u; k < VEC4_SPT; k += 1u){
-            let t = subgroupShuffle(subgroupInclusiveAdd(t_scan[k].w), circular_shift);
-            t_scan[k] += select(0u, t, laneid != 0u) + prev;
-            prev += subgroupBroadcast(t, 0u);
+            let t = subgroupShuffle(subgroupInclusiveAdd(select(prev, 0u, laneid != 0u) + t_scan[k].w), circular_shift);
+            t_scan[k] += select(prev, t, laneid != 0u);
+            prev = t;
         }
 
         if(laneid == 0u){
             wg_reduce[sid] = prev;
         }
-    }
-    workgroupBarrier();
+        workgroupBarrier();
 
-    //Non-divergent subgroup agnostic inclusive scan across subgroup reductions
-    {   
-        var offset0 = 0u;
-        var offset1 = 0u;
-        let lane_log = u32(countTrailingZeros(lane_count));
-        let spine_size = BLOCK_DIM >> lane_log;
-        let aligned_size = 1u << ((u32(countTrailingZeros(spine_size)) + lane_log - 1u) / lane_log * lane_log);
-        for(var j = lane_count; j <= aligned_size; j <<= lane_log){
-            let i0 = ((threadid.x + offset0) << offset1) - offset0;
-            let pred0 = i0 < spine_size;
-            let t0 = subgroupInclusiveAdd(select(0u, wg_reduce[i0], pred0));
-            if(pred0){
-                wg_reduce[i0] = t0;
-            }
-            workgroupBarrier();
-
-            if(j != lane_count){
-                let rshift = j >> lane_log;
-                let i1 = threadid.x + rshift;
-                if ((i1 & (j - 1u)) >= rshift){
-                    let pred1 = i1 < spine_size;
-                    let t1 = select(0u, wg_reduce[((i1 >> offset1) << offset1) - 1u], pred1);
-                    if(pred1 && ((i1 + 1u) & (rshift - 1u)) != 0u){
-                        wg_reduce[i1] += t1;
+        {   
+            var offset = 0u;
+            var top_offset = 0u;
+            for(var j = lane_count; j <= aligned_size; j <<= lane_log){
+                let step = spine_size >> offset;
+                let pred = threadid.x < step;
+                let t = subgroupInclusiveAdd(select(0u, wg_reduce[threadid.x + top_offset], pred));
+                if(pred){
+                    wg_reduce[threadid.x + top_offset] = t;
+                    if(lane_pred){
+                        wg_reduce[sid + step + top_offset] = t;
                     }
                 }
-            } else {
-                offset0 += 1u;
-            }
-            offset1 += lane_log;
-        }
-    }   
-    workgroupBarrier();
-    
-    {
-        let prev = select(0u, reduction[wgid.x - 1u], wgid.x != 0u) + select(0u, wg_reduce[sid - 1u], sid != 0u);
-        let s_offset = laneid + sid * lane_count * VEC4_SPT;
-        let dev_offset =  wgid.x * VEC_PART_SIZE;
-        var i = s_offset + dev_offset;
+                workgroupBarrier();
 
-        if(wgid.x < info.thread_blocks - 1u){
-            for(var k = 0u; k < VEC4_SPT; k += 1u){
-                scan_out[i] = t_scan[k] + prev;
-                i += lane_count;
+                if(j != lane_count){
+                    let rshift = j >> lane_log;
+                    let index = threadid.x + rshift;
+                    if(index < spine_size && (index & (j - 1u)) >= rshift){
+                        wg_reduce[index] += wg_reduce[(index >> offset) + top_offset - 1u];
+                    }
+                }
+                top_offset += step;
+                offset += lane_log;
             }
-        }
+        }   
+        workgroupBarrier();
 
-        if(wgid.x == info.thread_blocks - 1u){
+        let total_prev = rake_prev + rake_red + select(0u, wg_reduce[sid - 1u], sid != 0u);
+        {
+            var i = s_offset + dev_offset;
             for(var k = 0u; k < VEC4_SPT; k += 1u){
                 if(i < info.vec_size){
-                    scan_out[i] = t_scan[k] + prev;
+                    scan_out[i] = t_scan[k] + total_prev;
                 }
                 i += lane_count;
             }
         }
+
+        rake_red += wg_reduce[spine_size - 1u];
+        workgroupBarrier();
     }
 }

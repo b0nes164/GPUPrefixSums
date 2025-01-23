@@ -582,7 +582,7 @@ impl PassLogic for RtsPass {
             &tester.gpu_context.query_set,
             &tester.gpu_shaders.reduce,
             com_encoder,
-            tester.thread_blocks,
+            4096,
             0u32,
         );
         set_compute_pass(
@@ -596,7 +596,7 @@ impl PassLogic for RtsPass {
             &tester.gpu_context.query_set,
             &tester.gpu_shaders.downsweep,
             com_encoder,
-            tester.thread_blocks,
+            4096,
             4u32,
         );
     }
