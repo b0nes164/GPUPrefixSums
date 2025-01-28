@@ -50,6 +50,15 @@ impl GPUContext {
             .await
             .expect("Failed to find an appropriate adapter");
 
+        let adapter_info = adapter.get_info();
+        println!("Adapter Info:");
+        println!("  Name: {}", adapter_info.name);
+        println!("  Vendor: {}", adapter_info.vendor);
+        println!("  Device: {}", adapter_info.device);
+        println!("  Backend: {:?}", adapter_info.backend);
+        println!("  Driver: {}", adapter_info.driver);
+        println!("  Driver Info: {}", adapter_info.driver_info);
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
