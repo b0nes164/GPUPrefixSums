@@ -63,7 +63,7 @@ impl GPUContext {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP,
+                    required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP | wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
@@ -367,9 +367,14 @@ impl Shaders {
         let rts_mod = gpu
             .device
             .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/rts.wgsl"));
-        let csdl_mod = gpu
+
+        let csdl_mod;
+        unsafe {
+            csdl_mod = gpu
             .device
-            .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/csdl.wgsl"));
+            .create_shader_module_spirv(&wgpu::include_spirv_raw!("../../SharedShaders/csdl.main.spv"));
+        }
+        
         let csdldf_mod = gpu
             .device
             .create_shader_module(wgpu::include_wgsl!("../../SharedShaders/csdldf.wgsl"));
